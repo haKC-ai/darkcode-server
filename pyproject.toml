@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "darkcode-server"
-version = "0.1.0"
+version = "0.1.1"
 description = "Server for DarkCode Agent - Remote Claude Code from your phone"
 readme = "README.md"
 license = {text = "MIT"}

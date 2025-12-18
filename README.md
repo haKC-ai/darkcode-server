@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/darkcode_logo.png" alt="DarkCode"/>
+  <img src="https://raw.githubusercontent.com/haKC-ai/darkcode-server/main/assets/darkcode_logo.png" alt="DarkCode"/>
 </p>
 
 ```
@@ -169,21 +169,66 @@ pip install -e .
 
 ## Quick Start
 
+### First Time Setup
+
+Run the interactive setup wizard to configure everything:
+
 ```bash
-# First time? Run the setup wizard
 darkcode setup
-
-# Or just start it
-darkcode start
-
-# Run as background daemon
-darkcode daemon -b
-
-# Check status
-darkcode status
 ```
 
-After starting the server, scan the QR code with your DarkCode Android app to connect.
+The wizard will:
+1. Generate a secure auth token
+2. Detect your network interfaces (LAN, Tailscale)
+3. Set your default working directory
+4. Display a QR code to scan with the Android app
+
+### Starting the Server
+
+**Scenario 1: Quick start (foreground)**
+```bash
+darkcode start
+```
+Starts the server in your terminal. Press `Ctrl+C` to stop. A QR code is displayed for easy connection.
+
+**Scenario 2: Run in background (daemon mode)**
+```bash
+darkcode daemon -b
+```
+Runs as a background service. Logs are saved to `~/.darkcode/logs/`.
+
+**Scenario 3: Specific project directory**
+```bash
+darkcode start --working-dir /path/to/your/project
+```
+Claude Code will operate in the specified directory.
+
+**Scenario 4: Local-only for SSH tunneling**
+```bash
+darkcode start --local-only
+```
+Binds to localhost only. Connect via SSH tunnel for maximum security.
+
+**Scenario 5: Custom port**
+```bash
+darkcode start --port 8080
+```
+
+### After Starting
+
+1. Open the DarkCode app on your Android device
+2. Tap "Add Server"
+3. Scan the QR code displayed in your terminal (or enter details manually)
+4. Start chatting with Claude Code from your phone
+
+### Managing the Server
+
+```bash
+darkcode status    # Check if server is running
+darkcode stop      # Stop the daemon
+darkcode qr        # Show QR code again
+darkcode config    # View current configuration
+```
 
 ---
 
