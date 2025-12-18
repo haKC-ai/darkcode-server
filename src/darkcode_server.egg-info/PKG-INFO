@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: darkcode-server
-Version: 0.1.27
+Version: 0.1.28
 Summary: Server for DarkCode Agent - Remote Claude Code from your phone
 Author: 0xdeadbeef
 License: MIT
@@ -30,7 +30,7 @@ Requires-Dist: pydantic>=2.0.0
 Requires-Dist: pydantic-settings>=2.0.0
 Requires-Dist: cryptography>=41.0.0
 Requires-Dist: python-dotenv>=1.0.0
-Requires-Dist: simple-term-menu>=1.6.0
+Requires-Dist: prompt_toolkit>=3.0.0
 Provides-Extra: dev
 Requires-Dist: pytest>=7.0.0; extra == "dev"
 Requires-Dist: black>=23.0.0; extra == "dev"

@@ -693,74 +693,56 @@ def main(ctx, version, classic):
         return
 
     if ctx.invoked_subcommand is None:
-        show_banner()
-
         if classic:
             # Use old menu if explicitly requested
+            show_banner()
             interactive_menu()
         else:
-            # Default to modern prompt_toolkit dialogs with dropdowns
+            # Default to arrow-key navigation menu using prompt_toolkit
             try:
                 from darkcode_server.prompt_ui import run_interactive_menu
                 result = run_interactive_menu()
                 if result:
-                    action, mode = result
+                    action, data = result
                     if action == "start":
-                        # Start server with selected mode
+                        # data is a dict with mode, port, working_dir, no_web, save
                         config = ServerConfig.load()
-                        if mode == "ssh":
-                            config.local_only = True
-                        else:
-                            config.local_only = False
-                        # Call the start command logic
-                        ctx.invoke(start, local_only=config.local_only, no_banner=True)
-                    elif action == "status":
-                        menu_status()
-                    elif action == "qr":
-                        menu_qr_code()
-                    elif action == "guest":
-                        menu_guest_codes()
-                    elif action == "guest_create":
-                        from darkcode_server.prompt_ui import show_guest_create_dialog
-                        guest_data = show_guest_create_dialog()
-                        if guest_data:
-                            from darkcode_server.security import GuestAccessManager
-                            config = ServerConfig.load()
-                            guest_mgr = GuestAccessManager(config.config_dir / "guests.db")
-                            result = guest_mgr.create_guest_code(**guest_data)
-                            console.print(f"\n[green]Guest code created:[/] [bold]{result['code']}[/]")
-                            Prompt.ask("\n[dim]Press Enter to continue[/]")
-                    elif action == "guest_list":
-                        from click.testing import CliRunner
-                        runner = CliRunner()
-                        runner.invoke(guest_list, [], standalone_mode=False)
-                        Prompt.ask("\n[dim]Press Enter to continue[/]")
-                    elif action == "guest_revoke":
-                        code = Prompt.ask("[cyan]Code to revoke[/]")
-                        from click.testing import CliRunner
-                        runner = CliRunner()
-                        runner.invoke(guest_revoke, [code], standalone_mode=False)
-                        Prompt.ask("\n[dim]Press Enter to continue[/]")
-                    elif action == "guest_qr":
-                        code = Prompt.ask("[cyan]Code for QR[/]")
-                        from click.testing import CliRunner
-                        runner = CliRunner()
-                        runner.invoke(guest_qr, [code], standalone_mode=False)
-                        Prompt.ask("\n[dim]Press Enter to continue[/]")
-                    elif action == "config":
-                        menu_config()
-                    elif action == "security":
-                        menu_security()
+                        local_only = data.get("mode") == "ssh"
+                        port = data.get("port", config.port)
+                        working_dir = data.get("working_dir", str(config.working_dir))
+                        no_web = data.get("no_web", False)
+                        if data.get("save"):
+                            config.port = port
+                            config.working_dir = Path(working_dir)
+                            config.save()
+                        ctx.invoke(start, port=port, working_dir=working_dir, local_only=local_only, no_web=no_web, no_banner=True)
+                    elif action == "daemon_foreground":
+                        ctx.invoke(daemon, detach=False)
+                    elif action == "daemon_background":
+                        ctx.invoke(daemon, detach=True)
+                    elif action == "daemon_stop":
+                        ctx.invoke(stop)
                     elif action == "setup":
                         setup_wizard_menu()
-                    elif action == "install_tailscale":
-                        prompt_install_tailscale()
+                    elif action == "install":
+                        ctx.invoke(install)
+                    elif action == "uninstall":
+                        ctx.invoke(uninstall)
+                    elif action == "rotate_token":
+                        ctx.invoke(rotate_token)
+                    elif action == "client_cert":
+                        device_id = data
+                        ctx.invoke(client_cert, device_id=device_id)
             except ImportError as e:
-                console.print(f"[yellow]Interactive dialogs require prompt_toolkit. Falling back to classic menu.[/]")
+                console.print(f"[yellow]prompt_toolkit not installed. Falling back to classic menu.[/]")
                 console.print(f"[dim]Install with: pip install prompt_toolkit[/]")
+                show_banner()
                 interactive_menu()
             except Exception as e:
-                console.print(f"[yellow]Dialog error: {e}. Falling back to classic menu.[/]")
+                import traceback
+                console.print(f"[yellow]Menu error: {e}[/]")
+                console.print(f"[dim]{traceback.format_exc()}[/]")
+                show_banner()
                 interactive_menu()
 
 
