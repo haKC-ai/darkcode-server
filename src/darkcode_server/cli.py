@@ -767,13 +767,14 @@ def main(ctx, version, classic):
 @main.command()
 @click.option("--port", "-p", type=int, envvar="DARKCODE_PORT", help="Server port (default: 3100, env: DARKCODE_PORT)")
 @click.option("--token", "-t", envvar="DARKCODE_TOKEN", help="Auth token (env: DARKCODE_TOKEN)")
-@click.option("--working-dir", "-d", type=click.Path(exists=True), envvar="DARKCODE_WORKING_DIR", help="Working directory (env: DARKCODE_WORKING_DIR)")
+@click.option("--working-dir", "-d", type=click.Path(exists=True), envvar="DARKCODE_WORKING_DIR", help="Working directory for Claude (env: DARKCODE_WORKING_DIR)")
+@click.option("--browse-dir", "-b", type=click.Path(exists=True), envvar="DARKCODE_BROWSE_DIR", help="Default directory for app file browser (env: DARKCODE_BROWSE_DIR)")
 @click.option("--name", "-n", envvar="DARKCODE_SERVER_NAME", help="Server display name")
 @click.option("--local-only", "-l", is_flag=True, envvar="DARKCODE_LOCAL_ONLY", help="Only accept localhost connections (use with SSH tunnel)")
 @click.option("--no-banner", is_flag=True, help="Skip banner animation")
 @click.option("--no-web", is_flag=True, envvar="DARKCODE_NO_WEB", help="Disable web admin dashboard")
 @click.option("--save", "-s", is_flag=True, help="Save options to config file")
-def start(port, token, working_dir, name, local_only, no_banner, no_web, save):
+def start(port, token, working_dir, browse_dir, name, local_only, no_banner, no_web, save):
     """Start the DarkCode server.
 
     CONNECTION MODES:
@@ -820,6 +821,8 @@ def start(port, token, working_dir, name, local_only, no_banner, no_web, save):
         config.token = token
     if working_dir:
         config.working_dir = Path(working_dir)
+    if browse_dir:
+        config.browse_dir = Path(browse_dir)
     if name:
         config.server_name = name
     if local_only:

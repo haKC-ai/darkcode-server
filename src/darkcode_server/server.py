@@ -650,6 +650,7 @@ class DarkCodeServer:
                             "success": True,
                             "sessionId": session_id,
                             "workingDir": str(self.config.working_dir),
+                            "browseDir": str(self.config.effective_browse_dir),
                             "deviceBound": self.config.device_lock,
                             "state": self._state.value,
                             "isGuest": is_guest,

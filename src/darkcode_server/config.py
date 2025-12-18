@@ -35,7 +35,8 @@ class ServerConfig(BaseSettings):
     port: int = Field(default=3100, description="WebSocket server port")
     host: str = Field(default="0.0.0.0", description="Bind address (use 127.0.0.1 for local only)")
     token: str = Field(default_factory=get_default_token, description="Auth token")
-    working_dir: Path = Field(default_factory=Path.cwd, description="Working directory")
+    working_dir: Path = Field(default_factory=Path.cwd, description="Working directory for Claude")
+    browse_dir: Optional[Path] = Field(default=None, description="Default directory for app file browser (defaults to working_dir)")
     server_name: str = Field(default_factory=get_hostname, description="Server display name")
 
     # Security settings
@@ -79,6 +80,16 @@ class ServerConfig(BaseSettings):
     def is_exposed(self) -> bool:
         """Check if server is exposed to network (not localhost-only)."""
         return self.host == "0.0.0.0" and not self.local_only
+
+    @property
+    def effective_browse_dir(self) -> Path:
+        """Get the effective browse directory for the file browser.
+
+        Returns browse_dir if set, otherwise falls back to working_dir.
+        """
+        if self.browse_dir is not None:
+            return self.browse_dir.resolve()
+        return self.working_dir.resolve()
 
     @property
     def safe_working_dir(self) -> Path:
