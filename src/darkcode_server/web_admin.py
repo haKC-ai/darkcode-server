@@ -16,6 +16,7 @@ from typing import Optional
 from http import HTTPStatus
 
 # HTML template for the admin dashboard
+# NOTE: CSS curly braces are escaped ({{ and }}) to avoid Python .format() conflicts
 ADMIN_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -23,7 +24,7 @@ ADMIN_HTML = """<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DarkCode Server Admin</title>
     <style>
-        :root {
+        :root {{
             --bg: #0a0a0f;
             --bg-card: #12121a;
             --border: #2a2a3a;
@@ -34,46 +35,46 @@ ADMIN_HTML = """<!DOCTYPE html>
             --success: #00ff88;
             --warning: #ffaa00;
             --danger: #ff4466;
-        }
+        }}
 
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
-        body {
+        body {{
             font-family: 'SF Mono', 'Fira Code', monospace;
             background: var(--bg);
             color: var(--text);
             min-height: 100vh;
             padding: 20px;
-        }
+        }}
 
-        .container { max-width: 1200px; margin: 0 auto; }
+        .container {{ max-width: 1200px; margin: 0 auto; }}
 
-        header {
+        header {{
             display: flex;
             align-items: center;
             justify-content: space-between;
             padding: 20px 0;
             border-bottom: 1px solid var(--border);
             margin-bottom: 30px;
-        }
+        }}
 
-        .logo {
+        .logo {{
             display: flex;
             align-items: center;
             gap: 12px;
             font-size: 24px;
             font-weight: bold;
             color: var(--accent);
-        }
+        }}
 
-        .logo img {
+        .logo img {{
             height: 40px;
             width: auto;
-        }
+        }}
 
-        .logo span { color: var(--text-dim); font-weight: normal; }
+        .logo span {{ color: var(--text-dim); font-weight: normal; }}
 
-        .status-badge {
+        .status-badge {{
             display: flex;
             align-items: center;
             gap: 8px;
@@ -82,113 +83,113 @@ ADMIN_HTML = """<!DOCTYPE html>
             border: 1px solid var(--success);
             border-radius: 20px;
             font-size: 14px;
-        }
+        }}
 
-        .status-badge::before {
+        .status-badge::before {{
             content: '';
             width: 8px;
             height: 8px;
             background: var(--success);
             border-radius: 50%;
             animation: pulse 2s infinite;
-        }
+        }}
 
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
+        @keyframes pulse {{
+            0%, 100% {{ opacity: 1; }}
+            50% {{ opacity: 0.5; }}
+        }}
 
-        .grid {
+        .grid {{
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
             gap: 20px;
-        }
+        }}
 
-        .card {
+        .card {{
             background: var(--bg-card);
             border: 1px solid var(--border);
             border-radius: 12px;
             padding: 20px;
-        }
+        }}
 
-        .card h2 {
+        .card h2 {{
             font-size: 14px;
             text-transform: uppercase;
             color: var(--text-dim);
             margin-bottom: 15px;
             letter-spacing: 1px;
-        }
+        }}
 
-        .stat {
+        .stat {{
             display: flex;
             justify-content: space-between;
             padding: 10px 0;
             border-bottom: 1px solid var(--border);
-        }
+        }}
 
-        .stat:last-child { border-bottom: none; }
+        .stat:last-child {{ border-bottom: none; }}
 
-        .stat-label { color: var(--text-dim); }
-        .stat-value { color: var(--accent); font-weight: bold; }
+        .stat-label {{ color: var(--text-dim); }}
+        .stat-value {{ color: var(--accent); font-weight: bold; }}
 
-        .sessions-list {
+        .sessions-list {{
             max-height: 300px;
             overflow-y: auto;
-        }
+        }}
 
-        .session-item {
+        .session-item {{
             padding: 12px;
             background: rgba(0, 212, 255, 0.05);
             border: 1px solid var(--border);
             border-radius: 8px;
             margin-bottom: 10px;
-        }
+        }}
 
-        .session-item:last-child { margin-bottom: 0; }
+        .session-item:last-child {{ margin-bottom: 0; }}
 
-        .session-id {
+        .session-id {{
             font-size: 12px;
             color: var(--text-dim);
             margin-bottom: 5px;
-        }
+        }}
 
-        .session-info {
+        .session-info {{
             display: flex;
             justify-content: space-between;
             font-size: 13px;
-        }
+        }}
 
-        .empty { color: var(--text-dim); font-style: italic; }
+        .empty {{ color: var(--text-dim); font-style: italic; }}
 
-        .qr-section {
+        .qr-section {{
             text-align: center;
             padding: 20px;
-        }
+        }}
 
-        .qr-section img {
+        .qr-section img {{
             max-width: 200px;
             background: white;
             padding: 10px;
             border-radius: 8px;
-        }
+        }}
 
-        .token-display {
+        .token-display {{
             font-family: monospace;
             background: rgba(0, 0, 0, 0.5);
             padding: 15px;
             border-radius: 8px;
             word-break: break-all;
             color: var(--warning);
-        }
+        }}
 
-        .actions {
+        .actions {{
             display: flex;
             flex-wrap: wrap;
             gap: 10px;
             margin-top: 15px;
-        }
+        }}
 
-        .btn {
+        .btn {{
             padding: 10px 20px;
             border: 1px solid var(--border);
             border-radius: 8px;
@@ -197,29 +198,29 @@ ADMIN_HTML = """<!DOCTYPE html>
             font-family: inherit;
             cursor: pointer;
             transition: all 0.2s;
-        }
+        }}
 
-        .btn:hover {
+        .btn:hover {{
             background: rgba(255, 255, 255, 0.05);
             border-color: var(--accent);
-        }
+        }}
 
-        .btn-danger { border-color: var(--danger); color: var(--danger); }
-        .btn-danger:hover { background: rgba(255, 68, 102, 0.1); }
+        .btn-danger {{ border-color: var(--danger); color: var(--danger); }}
+        .btn-danger:hover {{ background: rgba(255, 68, 102, 0.1); }}
 
-        .refresh-note {
+        .refresh-note {{
             text-align: center;
             color: var(--text-dim);
             font-size: 12px;
             margin-top: 30px;
-        }
+        }}
 
-        .login-form {
+        .login-form {{
             max-width: 400px;
             margin: 100px auto;
-        }
+        }}
 
-        .login-form input {
+        .login-form input {{
             width: 100%;
             padding: 15px;
             background: var(--bg-card);
@@ -229,14 +230,14 @@ ADMIN_HTML = """<!DOCTYPE html>
             font-family: inherit;
             font-size: 16px;
             margin-bottom: 15px;
-        }
+        }}
 
-        .login-form input:focus {
+        .login-form input:focus {{
             outline: none;
             border-color: var(--accent);
-        }
+        }}
 
-        .login-form button {
+        .login-form button {{
             width: 100%;
             padding: 15px;
             background: var(--accent);
@@ -247,16 +248,16 @@ ADMIN_HTML = """<!DOCTYPE html>
             font-size: 16px;
             font-weight: bold;
             cursor: pointer;
-        }
+        }}
 
-        .error {
+        .error {{
             background: rgba(255, 68, 102, 0.1);
             border: 1px solid var(--danger);
             padding: 15px;
             border-radius: 8px;
             margin-bottom: 15px;
             color: var(--danger);
-        }
+        }}
     </style>
 </head>
 <body>
