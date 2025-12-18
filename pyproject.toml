@@ -35,7 +35,7 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "cryptography>=41.0.0",
     "python-dotenv>=1.0.0",
-    "pyTermTk>=0.40.0",
+    "pyTermTk>=0.40.0a0",
 ]
 
 [project.optional-dependencies]
