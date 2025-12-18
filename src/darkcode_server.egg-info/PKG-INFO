@@ -1,0 +1,254 @@
+Metadata-Version: 2.4
+Name: darkcode-server
+Version: 0.1.0
+Summary: Server for DarkCode Agent - Remote Claude Code from your phone
+Author: 0xdeadbeef
+License: MIT
+Project-URL: Homepage, https://github.com/user/DarkCodeAgent
+Project-URL: Repository, https://github.com/user/DarkCodeAgent
+Project-URL: Issues, https://github.com/user/DarkCodeAgent/issues
+Keywords: claude,ai,remote,mobile,websocket
+Classifier: Development Status :: 4 - Beta
+Classifier: Environment :: Console
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: rich>=13.0.0
+Requires-Dist: click>=8.0.0
+Requires-Dist: websockets>=12.0
+Requires-Dist: qrcode>=7.4
+Requires-Dist: pydantic>=2.0.0
+Requires-Dist: pydantic-settings>=2.0.0
+Requires-Dist: cryptography>=41.0.0
+Requires-Dist: hakcer>=0.1.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: black>=23.0.0; extra == "dev"
+Requires-Dist: ruff>=0.1.0; extra == "dev"
+Dynamic: license-file
+
+<p align="center">
+  <img src="assets/darkcode_logo.png" alt="DarkCode" width="400"/>
+</p>
+
+```
+                       ....---++++.+###################++++++##-.##.
+               ......----++++###.-###########################-.##.-#+.
+           . ...................+########-   ........ -#######+.+#+.##-
+                               .........                +#######+.##--##.
+ .......-------------+++##############+                 .--------..##-.##-
+                                                      -########-.##-.##+.
+      ........-----+++############-                .+#######+.-##.-##-
+                             ...................-+########-.+#+.+##.
+  ........-------+++++####-.############################-.##-.##+.
+            ...---++++++.- [D A R K C O D E S E R V E R]+.-##.-##-
+```
+
+<p align="center">
+  <a href="https://pypi.org/project/darkcode-server/"><img src="https://img.shields.io/pypi/v/darkcode-server?style=for-the-badge&color=00D9FF" alt="PyPI"/></a>
+  <a href="https://pypi.org/project/darkcode-server/"><img src="https://img.shields.io/pypi/pyversions/darkcode-server?style=for-the-badge&color=FF10F0" alt="Python"/></a>
+  <a href="https://github.com/anthropics/claude-code"><img src="https://img.shields.io/badge/Claude_Code-Compatible-7928CA?style=for-the-badge" alt="Claude Code"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-00FF41?style=for-the-badge" alt="License"/></a>
+</p>
+
+<p align="center">
+  <strong>▸ Control Claude Code from your phone ▸</strong>
+</p>
+
+---
+
+## ⚡ What is DarkCode Server?
+
+DarkCode Server is a secure WebSocket bridge that lets you remotely control [Claude Code](https://github.com/anthropics/claude-code) CLI from your Android device. Run Claude on your dev machine, interact from anywhere.
+
+```
+┌──────────────┐     WebSocket      ┌───────────────┐     stdin/stdout     ┌──────────────┐
+│  Android App │ ◄─────────────────►│ DarkCode Svr  │ ◄──────────────────► │  Claude Code │
+└──────────────┘    (ws/wss/ssh)    └───────────────┘                      └──────────────┘
+```
+
+## ★ Features
+
+- **🔌 Multiple Connection Modes** - Direct LAN, Tailscale VPN, or SSH Tunnel
+- **🔐 Enterprise Security** - TLS encryption, mTLS device binding, token rotation
+- **👥 Guest Access Codes** - Share access with friends (time-limited, use-limited)
+- **📱 Device Binding** - Lock server to your phone, reject all others
+- **😴 Sleep Mode** - Auto-sleep after idle, wake on reconnect
+- **🎯 QR Code Setup** - Scan to connect, zero manual config
+- **🖥️ Daemon Mode** - Background service with logging
+- **📊 Rate Limiting** - Brute-force protection with SQLite persistence
+
+## ◆ Installation
+
+```bash
+# via pip (recommended)
+pip install darkcode-server
+
+# via pipx (isolated environment)
+pipx install darkcode-server
+
+# from source
+git clone https://github.com/haKC-ai/DarkCodeAgent.git
+cd DarkCodeAgent/darkcode-server
+pip install -e .
+```
+
+## ► Quick Start
+
+```bash
+# First time? Run the setup wizard
+darkcode setup
+
+# Or just start it
+darkcode start
+
+# Run as background daemon
+darkcode daemon -b
+
+# Check status
+darkcode status
+```
+
+## 🔧 Configuration
+
+All settings via environment variables or `~/.darkcode/.env`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DARKCODE_PORT` | 3100 | WebSocket port |
+| `DARKCODE_TOKEN` | (generated) | Auth token |
+| `DARKCODE_WORKING_DIR` | cwd | Claude's working directory |
+| `DARKCODE_LOCAL_ONLY` | false | Localhost only (SSH tunnel mode) |
+| `DARKCODE_DEVICE_LOCK` | true | Lock to first device |
+| `DARKCODE_IDLE_TIMEOUT` | 300 | Seconds before sleep (0=disabled) |
+| `DARKCODE_TLS_ENABLED` | false | Enable WSS encryption |
+| `DARKCODE_MTLS_ENABLED` | false | Require client certificates |
+
+## 🛡️ Security
+
+```bash
+# Enable TLS encryption
+darkcode security tls --enable
+
+# Enable mTLS (client certificates)
+darkcode security tls --enable --mtls
+
+# Generate client cert for device
+darkcode security client-cert my-phone
+
+# View/unblock rate-limited IPs
+darkcode security blocked
+darkcode security blocked --unblock 192.168.1.100
+
+# Manually rotate auth token
+darkcode security rotate-token
+```
+
+## 👥 Guest Access
+
+Share access with friends using time-limited codes:
+
+```bash
+# Create a guest code (expires in 24h)
+darkcode guest create "John's phone"
+
+# Create with limits
+darkcode guest create "Demo" --expires 1 --max-uses 3
+
+# Read-only access (view only, no commands)
+darkcode guest create "Viewer" --read-only
+
+# List all codes
+darkcode guest list
+
+# Revoke a code
+darkcode guest revoke ABC123
+
+# Generate QR for guest
+darkcode guest qr ABC123
+```
+
+## 📱 CLI Commands
+
+```
+darkcode              # Interactive menu
+darkcode setup        # Setup wizard
+darkcode start        # Start server (foreground)
+darkcode daemon       # Start as daemon
+darkcode daemon -b    # Start daemon in background
+darkcode stop         # Stop daemon
+darkcode status       # Show server status
+darkcode qr           # Display connection QR code
+darkcode config       # View configuration
+darkcode unbind       # Unbind current device
+darkcode security     # Security commands (tls, blocked, rotate-token)
+darkcode guest        # Guest code commands (create, list, revoke, qr)
+```
+
+## 🔌 Connection Modes
+
+### Direct LAN
+Connect over local WiFi. Fastest, works offline.
+
+### Tailscale
+Connect via Tailscale mesh VPN. Works anywhere, auto-detected if installed.
+
+### SSH Tunnel
+Most secure. Run server localhost-only, tunnel from phone:
+```bash
+darkcode start --local-only
+# Then SSH tunnel from phone: ssh -L 3100:localhost:3100 user@host
+```
+
+## 📁 Directory Structure
+
+```
+~/.darkcode/
+├── .env              # Configuration
+├── darkcode.pid      # Daemon PID file
+├── security.db       # Rate limiting database
+├── tokens.db         # Token rotation history
+├── guests.db         # Guest access codes
+├── certs/            # TLS certificates
+│   ├── server.crt
+│   ├── server.key
+│   ├── ca.crt        # mTLS CA
+│   └── clients/      # Client certificates
+├── logs/
+│   ├── server.log
+│   └── connections.log
+└── sessions/
+```
+
+## 🤝 Contributing
+
+PRs welcome. Run tests before submitting:
+
+```bash
+pip install -e ".[dev]"
+pytest
+black src/
+ruff check src/
+```
+
+---
+
+<p align="center">
+  <sub>
+    ▸ Built with 🖤 by <a href="https://github.com/haKC-ai">haKC.ai</a> ▸<br/>
+    <em>signed, /dev/haKCØRY.23</em>
+  </sub>
+</p>
+
+<p align="center">
+  <sub>greets: SecKC ◆ LEGACY CoWTownComputerCongress ◆ ACiD ◆ iCE ◆ T$A</sub>
+</p>

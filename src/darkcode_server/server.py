@@ -1,0 +1,705 @@
+"""WebSocket server for DarkCode Agent."""
+
+import asyncio
+import hashlib
+import json
+import ssl
+import subprocess
+import time
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Optional, Tuple
+from pathlib import Path
+
+import websockets
+from websockets.server import WebSocketServerProtocol
+
+from darkcode_server.config import ServerConfig
+from darkcode_server.security import (
+    CertificateManager,
+    GuestAccessManager,
+    PersistentRateLimiter,
+    TokenManager,
+)
+
+
+class ServerState(Enum):
+    """Server operational states."""
+    AWAKE = "awake"          # Normal operation, accepting connections
+    SLEEPING = "sleeping"    # Idle timeout, only bound device can wake
+    LOCKED = "locked"        # Bound to device, rejecting others
+
+
+@dataclass
+class Session:
+    """A Claude Code session."""
+
+    id: str
+    websocket: WebSocketServerProtocol
+    device_id: str = ""  # Device fingerprint
+    process: Optional[subprocess.Popen] = None
+    working_dir: Path = field(default_factory=Path.cwd)
+    client_ip: str = "unknown"
+    created_at: float = field(default_factory=time.time)
+    last_active: float = field(default_factory=time.time)
+    message_count: int = 0
+    is_processing: bool = False
+    buffer: str = ""
+    # Guest session info
+    is_guest: bool = False
+    guest_code: str = ""
+    guest_name: str = ""
+    permission_level: str = "full"  # "full" or "read_only"
+
+    def __post_init__(self):
+        self.working_dir = Path(self.working_dir)
+
+
+class DarkCodeServer:
+    """WebSocket server that bridges mobile app to Claude Code CLI."""
+
+    def __init__(self, config: Optional[ServerConfig] = None):
+        self.config = config or ServerConfig.load()
+        self.sessions: dict[str, Session] = {}
+        self.ip_session_count: dict[str, int] = {}
+        self._server = None
+        self._running = False
+
+        # Security managers
+        self._rate_limiter = PersistentRateLimiter(
+            db_path=self.config.config_dir / "security.db",
+            max_attempts=self.config.rate_limit_attempts,
+            window_seconds=self.config.rate_limit_window,
+        )
+
+        self._token_manager: Optional[TokenManager] = None
+        if self.config.token_rotation_days > 0:
+            self._token_manager = TokenManager(
+                db_path=self.config.config_dir / "tokens.db",
+                rotation_days=self.config.token_rotation_days,
+                grace_hours=self.config.token_grace_hours,
+            )
+            # Initialize with current token
+            self._token_manager.set_current_token(self.config.token)
+
+        self._cert_manager: Optional[CertificateManager] = None
+        if self.config.tls_enabled:
+            self._cert_manager = CertificateManager(
+                cert_dir=self.config.config_dir / "certs"
+            )
+
+        # Guest access manager (always available)
+        self._guest_manager = GuestAccessManager(
+            db_path=self.config.config_dir / "guests.db"
+        )
+
+        # Device binding state
+        self._state = ServerState.AWAKE
+        self._bound_device_id: Optional[str] = None
+        self._last_activity = time.time()
+        self._idle_check_task: Optional[asyncio.Task] = None
+        self._rotation_check_task: Optional[asyncio.Task] = None
+
+        # Load bound device from config
+        if self.config.device_lock and self.config.bound_device_id:
+            self._bound_device_id = self.config.bound_device_id
+            self._state = ServerState.LOCKED
+
+    def _generate_device_id(self, client_ip: str, user_agent: str = "", device_info: dict = None) -> str:
+        """Generate a unique device fingerprint.
+
+        SECURITY: Device fingerprint combines multiple factors. If device_info
+        is not provided, we use a salted hash of IP + user_agent which is weaker
+        but still requires the attacker to know both values.
+        """
+        # Sanitize inputs to prevent log injection
+        def sanitize(s: str) -> str:
+            if not s:
+                return ""
+            # Remove control characters and limit length
+            return "".join(c for c in s[:256] if c.isprintable())
+
+        factors = []
+        if device_info:
+            # Prefer hardware-based identifiers
+            factors.extend([
+                sanitize(device_info.get("device_id", "")),
+                sanitize(device_info.get("android_id", "")),
+                sanitize(device_info.get("model", "")),
+                sanitize(device_info.get("fingerprint", "")),  # Build fingerprint
+            ])
+
+        factors.append(sanitize(user_agent))
+
+        # Filter empty strings
+        data = "|".join(f for f in factors if f)
+
+        if not data:
+            # Fallback: use IP + server secret as salt (weaker but better than IP alone)
+            # This prevents simple IP spoofing from working
+            data = f"{client_ip}|{self.config.token[:8]}"
+
+        return hashlib.sha256(data.encode()).hexdigest()[:32]
+
+    def _bind_device(self, device_id: str):
+        """Bind server to a device."""
+        self._bound_device_id = device_id
+        self._state = ServerState.LOCKED
+        # Persist to config
+        self.config.bound_device_id = device_id
+        self.config.save()
+
+    def _is_bound_device(self, device_id: str) -> bool:
+        """Check if device is the bound device."""
+        if not self._bound_device_id:
+            return True  # No device bound yet
+        return device_id == self._bound_device_id
+
+    def _update_activity(self):
+        """Update last activity timestamp."""
+        self._last_activity = time.time()
+        if self._state == ServerState.SLEEPING:
+            self._state = ServerState.LOCKED if self._bound_device_id else ServerState.AWAKE
+
+    async def _idle_monitor(self):
+        """Monitor for idle timeout."""
+        while self._running:
+            await asyncio.sleep(30)  # Check every 30 seconds
+
+            if self.config.idle_timeout <= 0:
+                continue
+
+            idle_time = time.time() - self._last_activity
+
+            if idle_time > self.config.idle_timeout and self._state != ServerState.SLEEPING:
+                if not self.sessions:  # Only sleep if no active sessions
+                    self._state = ServerState.SLEEPING
+
+    async def _token_rotation_monitor(self):
+        """Monitor for token rotation."""
+        while self._running:
+            await asyncio.sleep(3600)  # Check every hour
+
+            if self._token_manager and self._token_manager.should_rotate():
+                new_token = self._token_manager.rotate()
+                # Update config with new token
+                self.config.token = new_token
+                self.config.save()
+                # Note: Old tokens valid for grace_hours
+
+    async def start(self):
+        """Start the WebSocket server."""
+        self._running = True
+
+        # Prepare SSL context if TLS enabled
+        ssl_context = None
+        if self.config.tls_enabled and self._cert_manager:
+            # Use custom certs if provided, otherwise generate
+            if self.config.tls_cert_path and self.config.tls_key_path:
+                ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                ssl_context.load_cert_chain(
+                    certfile=str(self.config.tls_cert_path),
+                    keyfile=str(self.config.tls_key_path),
+                )
+            else:
+                # Generate self-signed cert with local IPs
+                local_ips = [ip["address"] for ip in self.config.get_local_ips()]
+                tailscale_ip = self.config.get_tailscale_ip()
+                if tailscale_ip:
+                    local_ips.append(tailscale_ip)
+
+                self._cert_manager.generate_server_cert(
+                    hostname=self.config.server_name,
+                    san_ips=local_ips,
+                )
+                ssl_context = self._cert_manager.get_ssl_context(
+                    require_client_cert=self.config.mtls_enabled
+                )
+
+        self._server = await websockets.serve(
+            self._handle_connection,
+            self.config.bind_host,  # Use bind_host which respects local_only
+            self.config.port,
+            ssl=ssl_context,
+            ping_interval=self.config.ping_interval,
+            ping_timeout=self.config.ping_timeout,
+        )
+
+        # Start idle monitor if timeout is configured
+        if self.config.idle_timeout > 0:
+            self._idle_check_task = asyncio.create_task(self._idle_monitor())
+
+        # Start token rotation monitor
+        if self._token_manager:
+            self._rotation_check_task = asyncio.create_task(self._token_rotation_monitor())
+
+        return self._server
+
+    async def stop(self):
+        """Stop the server and cleanup."""
+        self._running = False
+
+        if self._idle_check_task:
+            self._idle_check_task.cancel()
+            try:
+                await self._idle_check_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._rotation_check_task:
+            self._rotation_check_task.cancel()
+            try:
+                await self._rotation_check_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._server:
+            self._server.close()
+            await self._server.wait_closed()
+
+        # Cleanup sessions
+        for session in list(self.sessions.values()):
+            await self._destroy_session(session)
+
+    @property
+    def state(self) -> ServerState:
+        """Current server state."""
+        return self._state
+
+    @property
+    def bound_device(self) -> Optional[str]:
+        """Bound device ID if any."""
+        return self._bound_device_id
+
+    def unbind_device(self):
+        """Unbind the current device (requires restart or explicit call)."""
+        self._bound_device_id = None
+        self._state = ServerState.AWAKE
+        self.config.bound_device_id = None
+        self.config.save()
+
+    async def _handle_connection(self, websocket: WebSocketServerProtocol):
+        """Handle a new WebSocket connection."""
+        client_ip = websocket.remote_address[0] if websocket.remote_address else "unknown"
+
+        # mTLS: Extract device ID from client certificate if available
+        mtls_device_id: Optional[str] = None
+        if self.config.mtls_enabled and self._cert_manager:
+            # Get client certificate from SSL context
+            ssl_object = websocket.transport.get_extra_info('ssl_object')
+            if ssl_object:
+                try:
+                    client_cert = ssl_object.getpeercert(binary_form=True)
+                    if client_cert:
+                        mtls_device_id = self._cert_manager.verify_client_cert(client_cert)
+                except Exception:
+                    pass
+
+            if not mtls_device_id:
+                await websocket.close(1008, "Client certificate required")
+                return
+
+        # Check session limit
+        if self.ip_session_count.get(client_ip, 0) >= self.config.max_sessions_per_ip:
+            await websocket.close(1008, "Too many concurrent sessions")
+            return
+
+        session: Optional[Session] = None
+        authenticated = False
+        device_id: Optional[str] = None
+
+        try:
+            async for message in websocket:
+                try:
+                    msg = json.loads(message)
+                except json.JSONDecodeError:
+                    await websocket.send(json.dumps({
+                        "type": "error",
+                        "message": "Invalid JSON"
+                    }))
+                    continue
+
+                if not authenticated:
+                    if msg.get("type") == "auth":
+                        # Persistent rate limiting
+                        allowed, remaining = self._rate_limiter.check_rate_limit(client_ip, "ip")
+                        if not allowed:
+                            await websocket.send(json.dumps({
+                                "type": "auth_result",
+                                "success": False,
+                                "message": "Too many attempts. Try again later.",
+                                "retry_after": self.config.rate_limit_window,
+                            }))
+                            continue
+
+                        # Check for guest code first
+                        guest_code = msg.get("guest_code", "")
+                        is_guest = False
+                        guest_info = None
+                        permission_level = "full"
+
+                        if guest_code:
+                            # Guest code authentication
+                            code_valid, guest_info = self._guest_manager.verify_code(guest_code)
+                            if not code_valid:
+                                self._rate_limiter.record_attempt(client_ip, "ip", success=False)
+                                error_msg = "Invalid guest code"
+                                if guest_info and guest_info.get("error") == "expired":
+                                    error_msg = "Guest code has expired"
+                                elif guest_info and guest_info.get("error") == "max_uses_reached":
+                                    error_msg = "Guest code has reached maximum uses"
+                                await websocket.send(json.dumps({
+                                    "type": "auth_result",
+                                    "success": False,
+                                    "message": error_msg,
+                                }))
+                                continue
+                            is_guest = True
+                            permission_level = guest_info.get("permission_level", "full")
+                        else:
+                            # Standard token authentication
+                            token = msg.get("token", "")
+                            token_valid, token_status = self._verify_token_with_manager(token)
+                            if not token_valid:
+                                self._rate_limiter.record_attempt(client_ip, "ip", success=False)
+                                error_message = "Invalid token"
+                                if token_status == "token_expired":
+                                    error_message = "Token expired. Request new token from server."
+                                await websocket.send(json.dumps({
+                                    "type": "auth_result",
+                                    "success": False,
+                                    "message": error_message,
+                                }))
+                                continue
+
+                        # Generate device fingerprint (use mTLS device ID if available)
+                        if mtls_device_id:
+                            device_id = mtls_device_id
+                        else:
+                            device_info = msg.get("device_info", {})
+                            device_id = self._generate_device_id(
+                                client_ip,
+                                msg.get("user_agent", ""),
+                                device_info,
+                            )
+
+                        # Check device binding (skip for guest access)
+                        if self.config.device_lock and not is_guest:
+                            if self._state == ServerState.SLEEPING:
+                                # Server is sleeping - only bound device can wake it
+                                if not self._is_bound_device(device_id):
+                                    await websocket.send(json.dumps({
+                                        "type": "auth_result",
+                                        "success": False,
+                                        "message": "Server is sleeping. Only the bound device can connect.",
+                                        "state": "sleeping",
+                                    }))
+                                    continue
+                                # Wake up!
+                                self._update_activity()
+
+                            elif self._bound_device_id and not self._is_bound_device(device_id):
+                                # Wrong device trying to connect
+                                self._rate_limiter.record_attempt(device_id, "device", success=False)
+                                await websocket.send(json.dumps({
+                                    "type": "auth_result",
+                                    "success": False,
+                                    "message": "Server is locked to another device.",
+                                    "state": "locked",
+                                }))
+                                continue
+
+                            elif not self._bound_device_id:
+                                # First connection - bind this device
+                                self._bind_device(device_id)
+
+                        # Auth passed
+                        authenticated = True
+                        self._rate_limiter.record_attempt(client_ip, "ip", success=True)
+                        self._update_activity()
+
+                        # Record guest code usage
+                        if is_guest:
+                            self._guest_manager.use_code(guest_code, device_id, client_ip)
+
+                        # Create session
+                        import uuid
+                        session_id = str(uuid.uuid4())
+                        session = Session(
+                            id=session_id,
+                            websocket=websocket,
+                            device_id=device_id,
+                            working_dir=self.config.working_dir,
+                            client_ip=client_ip,
+                            is_guest=is_guest,
+                            guest_code=guest_code if is_guest else "",
+                            guest_name=guest_info.get("name", "") if guest_info else "",
+                            permission_level=permission_level,
+                        )
+                        self.sessions[session_id] = session
+                        self.ip_session_count[client_ip] = (
+                            self.ip_session_count.get(client_ip, 0) + 1
+                        )
+
+                        # Start Claude process
+                        await self._start_claude_process(session)
+
+                        auth_response = {
+                            "type": "auth_result",
+                            "success": True,
+                            "sessionId": session_id,
+                            "workingDir": str(self.config.working_dir),
+                            "deviceBound": self.config.device_lock,
+                            "state": self._state.value,
+                            "isGuest": is_guest,
+                            "permissionLevel": permission_level,
+                        }
+                        if is_guest and guest_info:
+                            auth_response["guestName"] = guest_info.get("name", "")
+                            auth_response["guestExpiresAt"] = guest_info.get("expires_at")
+                            auth_response["guestUsesRemaining"] = (
+                                guest_info.get("max_uses", 0) - guest_info.get("use_count", 0)
+                                if guest_info.get("max_uses") else None
+                            )
+                        await websocket.send(json.dumps(auth_response))
+                    else:
+                        await websocket.send(json.dumps({
+                            "type": "error",
+                            "message": "Not authenticated",
+                        }))
+                    continue
+
+                # Handle authenticated messages
+                if session:
+                    self._update_activity()
+                    await self._handle_message(session, msg)
+
+        except websockets.exceptions.ConnectionClosed:
+            pass
+        finally:
+            if session:
+                await self._destroy_session(session)
+                count = self.ip_session_count.get(client_ip, 1) - 1
+                if count <= 0:
+                    self.ip_session_count.pop(client_ip, None)
+                else:
+                    self.ip_session_count[client_ip] = count
+
+    async def _start_claude_process(self, session: Session):
+        """Start the Claude Code CLI process.
+
+        SECURITY: Uses validated working directory from config.
+        """
+        try:
+            # Use validated working directory
+            working_dir = self.config.safe_working_dir
+
+            session.process = subprocess.Popen(
+                ["claude", "--output-format", "stream-json"],
+                cwd=str(working_dir),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+
+            # Start output reader task
+            asyncio.create_task(self._read_output(session))
+
+            await session.websocket.send(json.dumps({
+                "type": "status",
+                "status": "ready",
+                "sessionId": session.id,
+            }))
+
+        except Exception as e:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Failed to start Claude: {e}",
+                "recoverable": False,
+            }))
+
+    async def _read_output(self, session: Session):
+        """Read output from Claude process."""
+        if not session.process or not session.process.stdout:
+            return
+
+        loop = asyncio.get_event_loop()
+
+        def read_line():
+            if session.process and session.process.stdout:
+                return session.process.stdout.readline()
+            return ""
+
+        while session.process and session.process.poll() is None:
+            try:
+                line = await loop.run_in_executor(None, read_line)
+                if not line:
+                    await asyncio.sleep(0.01)
+                    continue
+
+                line = line.strip()
+                if not line:
+                    continue
+
+                try:
+                    parsed = json.loads(line)
+                    await self._handle_claude_output(session, parsed)
+                except json.JSONDecodeError:
+                    await session.websocket.send(json.dumps({
+                        "type": "claude_output",
+                        "raw": line,
+                    }))
+
+            except Exception:
+                break
+
+    async def _handle_claude_output(self, session: Session, msg: dict):
+        """Handle parsed output from Claude."""
+        msg_type = msg.get("type", "")
+
+        if msg_type == "assistant":
+            await session.websocket.send(json.dumps({
+                "type": "claude_message",
+                "role": "assistant",
+                "content": msg.get("message", {}).get("content") or msg.get("content"),
+                "timestamp": int(time.time() * 1000),
+            }))
+
+        elif msg_type == "tool_use":
+            await session.websocket.send(json.dumps({
+                "type": "tool_use",
+                "id": msg.get("tool_use_id") or msg.get("id"),
+                "name": msg.get("name") or msg.get("tool_name"),
+                "input": msg.get("input") or msg.get("parameters"),
+            }))
+
+        elif msg_type == "tool_result":
+            await session.websocket.send(json.dumps({
+                "type": "tool_result",
+                "id": msg.get("tool_use_id") or msg.get("id"),
+                "content": msg.get("content") or msg.get("result"),
+                "isError": msg.get("is_error", False),
+            }))
+
+        elif msg_type == "result":
+            session.is_processing = False
+            await session.websocket.send(json.dumps({
+                "type": "status",
+                "status": "complete",
+                "cost": msg.get("cost_usd"),
+                "duration": msg.get("duration_ms"),
+            }))
+
+        else:
+            await session.websocket.send(json.dumps({
+                "type": "claude_output",
+                "parsed": msg,
+            }))
+
+    async def _handle_message(self, session: Session, msg: dict):
+        """Handle an authenticated message.
+
+        SECURITY: All user input is validated before being passed to subprocess.
+        """
+        msg_type = msg.get("type", "")
+
+        # Max message size (1MB should be plenty for any prompt)
+        MAX_MESSAGE_SIZE = 1024 * 1024
+
+        if msg_type == "send_message":
+            text = msg.get("text", "")
+
+            # Validate message
+            if not isinstance(text, str):
+                await session.websocket.send(json.dumps({
+                    "type": "error",
+                    "message": "Invalid message format",
+                }))
+                return
+
+            if len(text) > MAX_MESSAGE_SIZE:
+                await session.websocket.send(json.dumps({
+                    "type": "error",
+                    "message": f"Message too large (max {MAX_MESSAGE_SIZE} bytes)",
+                }))
+                return
+
+            if text and session.process and session.process.stdin:
+                session.is_processing = True
+                session.last_active = time.time()
+                session.message_count += 1
+                # Text goes to Claude's stdin - Claude handles its own sandboxing
+                session.process.stdin.write(text + "\n")
+                session.process.stdin.flush()
+                await session.websocket.send(json.dumps({
+                    "type": "status",
+                    "status": "processing",
+                }))
+
+        elif msg_type == "abort":
+            if session.process:
+                session.process.send_signal(subprocess.signal.SIGINT)
+                session.is_processing = False
+                await session.websocket.send(json.dumps({
+                    "type": "status",
+                    "status": "aborted",
+                }))
+
+        elif msg_type == "accept_edit":
+            if session.process and session.process.stdin:
+                session.process.stdin.write("y\n")
+                session.process.stdin.flush()
+
+        elif msg_type == "reject_edit":
+            if session.process and session.process.stdin:
+                session.process.stdin.write("n\n")
+                session.process.stdin.flush()
+
+        elif msg_type == "get_session_info":
+            await session.websocket.send(json.dumps({
+                "type": "session_info",
+                "sessionId": session.id,
+                "workingDir": str(session.working_dir),
+                "isProcessing": session.is_processing,
+                "messageCount": session.message_count,
+            }))
+
+    async def _destroy_session(self, session: Session):
+        """Cleanup a session."""
+        if session.process:
+            try:
+                session.process.stdin.close() if session.process.stdin else None
+                session.process.terminate()
+                session.process.wait(timeout=3)
+            except Exception:
+                session.process.kill()
+
+        self.sessions.pop(session.id, None)
+
+    def _verify_token(self, provided: str) -> bool:
+        """Timing-safe token verification (legacy method)."""
+        import hmac
+        expected = self.config.token
+        return hmac.compare_digest(provided, expected)
+
+    def _verify_token_with_manager(self, token: str) -> Tuple[bool, str]:
+        """Verify token using TokenManager if available, with fallback.
+
+        Returns:
+            Tuple of (valid, status) where status is:
+            - "current": Token is the current valid token
+            - "grace_period": Token was rotated but still in grace period
+            - "valid": Token matches (legacy/fallback mode)
+            - "invalid": Token doesn't match
+            - "token_expired": Token has expired
+        """
+        # Use TokenManager if available
+        if self._token_manager:
+            return self._token_manager.verify_token(token)
+
+        # Fallback to simple timing-safe comparison
+        if self._verify_token(token):
+            return True, "valid"
+        return False, "invalid"

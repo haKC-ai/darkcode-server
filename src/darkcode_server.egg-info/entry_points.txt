@@ -1,0 +1,2 @@
+[console_scripts]
+darkcode = darkcode_server.cli:main

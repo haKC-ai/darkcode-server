@@ -1,0 +1,17 @@
+LICENSE
+README.md
+pyproject.toml
+src/darkcode_server/__init__.py
+src/darkcode_server/cli.py
+src/darkcode_server/config.py
+src/darkcode_server/daemon.py
+src/darkcode_server/qrcode.py
+src/darkcode_server/security.py
+src/darkcode_server/server.py
+src/darkcode_server.egg-info/PKG-INFO
+src/darkcode_server.egg-info/SOURCES.txt
+src/darkcode_server.egg-info/dependency_links.txt
+src/darkcode_server.egg-info/entry_points.txt
+src/darkcode_server.egg-info/requires.txt
+src/darkcode_server.egg-info/top_level.txt
+src/darkcode_server/assets/banner.txt

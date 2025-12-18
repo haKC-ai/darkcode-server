@@ -1,0 +1,13 @@
+rich>=13.0.0
+click>=8.0.0
+websockets>=12.0
+qrcode>=7.4
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+cryptography>=41.0.0
+hakcer>=0.1.0
+
+[dev]
+pytest>=7.0.0
+black>=23.0.0
+ruff>=0.1.0
