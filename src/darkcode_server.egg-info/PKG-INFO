@@ -1,12 +1,12 @@
 Metadata-Version: 2.4
 Name: darkcode-server
-Version: 0.1.0
+Version: 0.1.9
 Summary: Server for DarkCode Agent - Remote Claude Code from your phone
 Author: 0xdeadbeef
 License: MIT
-Project-URL: Homepage, https://github.com/user/DarkCodeAgent
-Project-URL: Repository, https://github.com/user/DarkCodeAgent
-Project-URL: Issues, https://github.com/user/DarkCodeAgent/issues
+Project-URL: Homepage, https://github.com/haKC-ai/darkcode-server
+Project-URL: Repository, https://github.com/haKC-ai/darkcode-server
+Project-URL: Issues, https://github.com/haKC-ai/darkcode-server/issues
 Keywords: claude,ai,remote,mobile,websocket
 Classifier: Development Status :: 4 - Beta
 Classifier: Environment :: Console
@@ -29,7 +29,8 @@ Requires-Dist: qrcode>=7.4
 Requires-Dist: pydantic>=2.0.0
 Requires-Dist: pydantic-settings>=2.0.0
 Requires-Dist: cryptography>=41.0.0
-Requires-Dist: hakcer>=0.1.0
+Requires-Dist: python-dotenv>=1.0.0
+Requires-Dist: pyTermTk>=0.40.0a0
 Provides-Extra: dev
 Requires-Dist: pytest>=7.0.0; extra == "dev"
 Requires-Dist: black>=23.0.0; extra == "dev"
@@ -37,7 +38,7 @@ Requires-Dist: ruff>=0.1.0; extra == "dev"
 Dynamic: license-file
 
 <p align="center">
-  <img src="assets/darkcode_logo.png" alt="DarkCode" width="400"/>
+  <img src="https://raw.githubusercontent.com/haKC-ai/darkcode-server/main/assets/darkcode_logo.png" alt="DarkCode"/>
 </p>
 
 ```
@@ -61,33 +62,134 @@ Dynamic: license-file
 </p>
 
 <p align="center">
-  <strong>▸ Control Claude Code from your phone ▸</strong>
+  <strong>[ Control Claude Code from your phone ]</strong>
 </p>
 
 ---
 
-## ⚡ What is DarkCode Server?
+## Requirements
+
+> **This is a companion server for the DarkCode Android app.**
+> The server is useless without the mobile app installed on your Android device.
+
+<p align="center">
+  <a href="https://play.google.com/store/apps/details?id=ai.darkcode.agent">
+    <img src="https://img.shields.io/badge/GET_IT_ON-Google_Play-00FF41?style=for-the-badge&logo=google-play" alt="Get it on Google Play"/>
+  </a>
+</p>
+
+**Download the DarkCode app:** [Google Play Store](https://play.google.com/store/apps/details?id=ai.darkcode.agent)
+
+```mermaid
+flowchart LR
+    subgraph Required["Required Components"]
+        APP["DarkCode Android App\n(Google Play)"]
+        SERVER["DarkCode Server\n(this package)"]
+        CLAUDE["Claude Code CLI\n(Anthropic)"]
+    end
+
+    APP <-->|WebSocket| SERVER
+    SERVER <-->|stdin/stdout| CLAUDE
+
+    style APP fill:#FF10F0,stroke:#333,color:#000
+    style SERVER fill:#7928CA,stroke:#333,color:#fff
+    style CLAUDE fill:#00FF41,stroke:#333,color:#000
+```
+
+---
+
+## What is DarkCode Server?
 
 DarkCode Server is a secure WebSocket bridge that lets you remotely control [Claude Code](https://github.com/anthropics/claude-code) CLI from your Android device. Run Claude on your dev machine, interact from anywhere.
 
+**You need:**
+1. The **DarkCode Android app** installed on your phone
+2. **Claude Code CLI** installed on your computer
+3. **DarkCode Server** (this package) running on your computer
+
+```mermaid
+flowchart LR
+    A[Android App] <-->|WebSocket\nws/wss/ssh| B[DarkCode Server]
+    B <-->|stdin/stdout| C[Claude Code CLI]
+
+    style A fill:#FF10F0,stroke:#00D9FF,color:#000
+    style B fill:#7928CA,stroke:#00D9FF,color:#fff
+    style C fill:#00FF41,stroke:#00D9FF,color:#000
 ```
-┌──────────────┐     WebSocket      ┌───────────────┐     stdin/stdout     ┌──────────────┐
-│  Android App │ ◄─────────────────►│ DarkCode Svr  │ ◄──────────────────► │  Claude Code │
-└──────────────┘    (ws/wss/ssh)    └───────────────┘                      └──────────────┘
+
+---
+
+## Features
+
+- **Multiple Connection Modes** - Direct LAN, Tailscale VPN, or SSH Tunnel
+- **Enterprise Security** - TLS encryption, mTLS device binding, token rotation
+- **Guest Access Codes** - Share access with friends (time-limited, use-limited)
+- **Device Binding** - Lock server to your phone, reject all others
+- **Sleep Mode** - Auto-sleep after idle, wake on reconnect
+- **QR Code Setup** - Scan to connect, zero manual config
+- **Daemon Mode** - Background service with logging
+- **Rate Limiting** - Brute-force protection with SQLite persistence
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Phone["Android Device"]
+        APP[DarkCode App]
+    end
+
+    subgraph Network["Connection Layer"]
+        direction LR
+        LAN[Direct LAN]
+        TS[Tailscale VPN]
+        SSH[SSH Tunnel]
+    end
+
+    subgraph Server["DarkCode Server"]
+        WS[WebSocket Handler]
+        AUTH[Auth Manager]
+        SEC[Security Layer]
+        GUEST[Guest Codes]
+        RATE[Rate Limiter]
+    end
+
+    subgraph Claude["Claude Code"]
+        CLI[CLI Process]
+        STDIN[stdin]
+        STDOUT[stdout]
+    end
+
+    APP --> LAN & TS & SSH
+    LAN & TS & SSH --> WS
+    WS --> AUTH
+    AUTH --> SEC
+    SEC --> GUEST
+    SEC --> RATE
+    WS <--> STDIN
+    STDOUT <--> WS
+    STDIN <--> CLI
+    CLI <--> STDOUT
+
+    style APP fill:#FF10F0,stroke:#333,color:#000
+    style WS fill:#7928CA,stroke:#333,color:#fff
+    style CLI fill:#00FF41,stroke:#333,color:#000
 ```
 
-## ★ Features
+---
 
-- **🔌 Multiple Connection Modes** - Direct LAN, Tailscale VPN, or SSH Tunnel
-- **🔐 Enterprise Security** - TLS encryption, mTLS device binding, token rotation
-- **👥 Guest Access Codes** - Share access with friends (time-limited, use-limited)
-- **📱 Device Binding** - Lock server to your phone, reject all others
-- **😴 Sleep Mode** - Auto-sleep after idle, wake on reconnect
-- **🎯 QR Code Setup** - Scan to connect, zero manual config
-- **🖥️ Daemon Mode** - Background service with logging
-- **📊 Rate Limiting** - Brute-force protection with SQLite persistence
+## Installation
 
-## ◆ Installation
+### Step 1: Get the Android App
+
+Download from Google Play: [DarkCode for Android](https://play.google.com/store/apps/details?id=ai.darkcode.agent)
+
+### Step 2: Install Claude Code
+
+Follow the instructions at [github.com/anthropics/claude-code](https://github.com/anthropics/claude-code)
+
+### Step 3: Install DarkCode Server
 
 ```bash
 # via pip (recommended)
@@ -102,23 +204,74 @@ cd DarkCodeAgent/darkcode-server
 pip install -e .
 ```
 
-## ► Quick Start
+---
+
+## Quick Start
+
+### First Time Setup
+
+Run the interactive setup wizard to configure everything:
 
 ```bash
-# First time? Run the setup wizard
 darkcode setup
-
-# Or just start it
-darkcode start
-
-# Run as background daemon
-darkcode daemon -b
-
-# Check status
-darkcode status
 ```
 
-## 🔧 Configuration
+The wizard will:
+1. Generate a secure auth token
+2. Detect your network interfaces (LAN, Tailscale)
+3. Set your default working directory
+4. Display a QR code to scan with the Android app
+
+### Starting the Server
+
+**Scenario 1: Quick start (foreground)**
+```bash
+darkcode start
+```
+Starts the server in your terminal. Press `Ctrl+C` to stop. A QR code is displayed for easy connection.
+
+**Scenario 2: Run in background (daemon mode)**
+```bash
+darkcode daemon -b
+```
+Runs as a background service. Logs are saved to `~/.darkcode/logs/`.
+
+**Scenario 3: Specific project directory**
+```bash
+darkcode start --working-dir /path/to/your/project
+```
+Claude Code will operate in the specified directory.
+
+**Scenario 4: Local-only for SSH tunneling**
+```bash
+darkcode start --local-only
+```
+Binds to localhost only. Connect via SSH tunnel for maximum security.
+
+**Scenario 5: Custom port**
+```bash
+darkcode start --port 8080
+```
+
+### After Starting
+
+1. Open the DarkCode app on your Android device
+2. Tap "Add Server"
+3. Scan the QR code displayed in your terminal (or enter details manually)
+4. Start chatting with Claude Code from your phone
+
+### Managing the Server
+
+```bash
+darkcode status    # Check if server is running
+darkcode stop      # Stop the daemon
+darkcode qr        # Show QR code again
+darkcode config    # View current configuration
+```
+
+---
+
+## Configuration
 
 All settings via environment variables or `~/.darkcode/.env`:
 
@@ -133,7 +286,46 @@ All settings via environment variables or `~/.darkcode/.env`:
 | `DARKCODE_TLS_ENABLED` | false | Enable WSS encryption |
 | `DARKCODE_MTLS_ENABLED` | false | Require client certificates |
 
-## 🛡️ Security
+---
+
+## Security
+
+```mermaid
+flowchart LR
+    subgraph Client["Client"]
+        REQ[Request]
+    end
+
+    subgraph Security["Security Pipeline"]
+        RATE[Rate Limiter]
+        TLS[TLS/mTLS]
+        TOKEN[Token Auth]
+        DEVICE[Device Lock]
+        GUEST[Guest Code]
+    end
+
+    subgraph Server["Server"]
+        ALLOW[Allow]
+        DENY[Deny]
+    end
+
+    REQ --> RATE
+    RATE -->|pass| TLS
+    RATE -->|blocked| DENY
+    TLS -->|valid| TOKEN
+    TLS -->|invalid| DENY
+    TOKEN -->|valid| DEVICE
+    TOKEN -->|invalid| GUEST
+    GUEST -->|valid| ALLOW
+    GUEST -->|invalid| DENY
+    DEVICE -->|bound| ALLOW
+    DEVICE -->|unbound| DENY
+
+    style DENY fill:#ff4444,stroke:#333,color:#fff
+    style ALLOW fill:#00FF41,stroke:#333,color:#000
+```
+
+### Security Commands
 
 ```bash
 # Enable TLS encryption
@@ -153,9 +345,28 @@ darkcode security blocked --unblock 192.168.1.100
 darkcode security rotate-token
 ```
 
-## 👥 Guest Access
+---
+
+## Guest Access
 
 Share access with friends using time-limited codes:
+
+```mermaid
+sequenceDiagram
+    participant Owner
+    participant Server
+    participant Guest
+
+    Owner->>Server: darkcode guest create "Friend"
+    Server-->>Owner: Code: ABC123 (24h, unlimited uses)
+    Owner->>Guest: Share code ABC123
+    Guest->>Server: Connect with guest_code: ABC123
+    Server->>Server: Verify code validity
+    Server->>Server: Check expiration & use count
+    Server-->>Guest: Access granted (read-only or full)
+```
+
+### Guest Commands
 
 ```bash
 # Create a guest code (expires in 24h)
@@ -177,7 +388,9 @@ darkcode guest revoke ABC123
 darkcode guest qr ABC123
 ```
 
-## 📱 CLI Commands
+---
+
+## CLI Commands
 
 ```
 darkcode              # Interactive menu
@@ -194,7 +407,32 @@ darkcode security     # Security commands (tls, blocked, rotate-token)
 darkcode guest        # Guest code commands (create, list, revoke, qr)
 ```
 
-## 🔌 Connection Modes
+---
+
+## Connection Modes
+
+```mermaid
+flowchart TB
+    subgraph Direct["Direct LAN"]
+        D1[Phone] -->|WiFi| D2[Server]
+        D3["Fastest, works offline"]
+    end
+
+    subgraph Tailscale["Tailscale VPN"]
+        T1[Phone] -->|Mesh VPN| T2[Server]
+        T3["Works anywhere, auto-detected"]
+    end
+
+    subgraph SSH["SSH Tunnel"]
+        S1[Phone] -->|SSH -L| S2[localhost:3100]
+        S2 -->|localhost| S3[Server]
+        S4["Most secure, localhost-only"]
+    end
+
+    style D3 fill:none,stroke:none
+    style T3 fill:none,stroke:none
+    style S4 fill:none,stroke:none
+```
 
 ### Direct LAN
 Connect over local WiFi. Fastest, works offline.
@@ -209,7 +447,9 @@ darkcode start --local-only
 # Then SSH tunnel from phone: ssh -L 3100:localhost:3100 user@host
 ```
 
-## 📁 Directory Structure
+---
+
+## Directory Structure
 
 ```
 ~/.darkcode/
@@ -229,7 +469,9 @@ darkcode start --local-only
 └── sessions/
 ```
 
-## 🤝 Contributing
+---
+
+## Contributing
 
 PRs welcome. Run tests before submitting:
 
@@ -244,11 +486,11 @@ ruff check src/
 
 <p align="center">
   <sub>
-    ▸ Built with 🖤 by <a href="https://github.com/haKC-ai">haKC.ai</a> ▸<br/>
-    <em>signed, /dev/haKCØRY.23</em>
+    [ Built by <a href="https://github.com/haKC-ai">haKC.ai</a> ]<br/>
+    <em>signed, /dev/haKCORY.23</em>
   </sub>
 </p>
 
 <p align="center">
-  <sub>greets: SecKC ◆ LEGACY CoWTownComputerCongress ◆ ACiD ◆ iCE ◆ T$A</sub>
+  <sub>greets: SecKC | LEGACY CoWTownComputerCongress | ACiD | iCE | T$A</sub>
 </p>
