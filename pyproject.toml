@@ -34,7 +34,7 @@ dependencies = [
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "cryptography>=41.0.0",
-    "hakcer>=0.1.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -48,9 +48,9 @@ dev = [
 darkcode = "darkcode_server.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/user/DarkCodeAgent"
-Repository = "https://github.com/user/DarkCodeAgent"
-Issues = "https://github.com/user/DarkCodeAgent/issues"
+Homepage = "https://github.com/haKC-ai/darkcode-server"
+Repository = "https://github.com/haKC-ai/darkcode-server"
+Issues = "https://github.com/haKC-ai/darkcode-server/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
