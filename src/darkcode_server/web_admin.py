@@ -345,9 +345,14 @@ DASHBOARD_CONTENT = """
             <span class="stat-value">{device_lock}</span>
         </div>
         <div class="stat">
+            <span class="stat-label">Bound Device</span>
+            <span class="stat-value">{bound_device}</span>
+        </div>
+        <div class="stat">
             <span class="stat-label">TLS</span>
             <span class="stat-value">{tls_status}</span>
         </div>
+        {unbind_button}
     </div>
 
     <div class="card">
@@ -403,12 +408,17 @@ class WebAdminHandler:
 
     # Class-level PIN that persists across handler instances
     _web_pin: Optional[str] = None
+    # Class-level authenticated sessions (must be class-level to persist across instances)
+    _authenticated_sessions: set = set()
+    _start_time: Optional[float] = None
 
     def __init__(self, config, server_instance=None):
         self.config = config
         self.server = server_instance
-        self.start_time = time.time()
-        self._authenticated_sessions = set()  # Store authenticated session cookies
+
+        # Set start time once on first handler creation
+        if WebAdminHandler._start_time is None:
+            WebAdminHandler._start_time = time.time()
 
         # Generate PIN once on first handler creation
         if WebAdminHandler._web_pin is None:
@@ -434,7 +444,7 @@ class WebAdminHandler:
     def _is_authenticated(self, cookies: dict) -> bool:
         """Check if the request has a valid session cookie."""
         session_id = cookies.get('darkcode_admin_session')
-        return session_id in self._authenticated_sessions
+        return session_id in WebAdminHandler._authenticated_sessions
 
     def _verify_pin(self, pin: str) -> bool:
         """Verify the provided PIN matches the web PIN."""
@@ -497,7 +507,7 @@ class WebAdminHandler:
             if pin:
                 if self._verify_pin(pin):
                     session_cookie = self._generate_session_cookie()
-                    self._authenticated_sessions.add(session_cookie)
+                    WebAdminHandler._authenticated_sessions.add(session_cookie)
                     return (
                         302,
                         {
@@ -515,7 +525,7 @@ class WebAdminHandler:
         elif clean_path == '/admin/logout':
             session_id = cookies.get('darkcode_admin_session')
             if session_id:
-                self._authenticated_sessions.discard(session_id)
+                WebAdminHandler._authenticated_sessions.discard(session_id)
             return (
                 302,
                 {
@@ -529,6 +539,11 @@ class WebAdminHandler:
             if not self._is_authenticated(cookies):
                 return (401, {'Content-Type': 'application/json'}, b'{"error": "Unauthorized"}')
             return self._api_status()
+
+        elif clean_path == '/admin/unbind':
+            if not self._is_authenticated(cookies):
+                return self._login_page()
+            return self._unbind_device()
 
         else:
             return (404, {'Content-Type': 'text/html'}, b'Not Found')
@@ -548,7 +563,7 @@ class WebAdminHandler:
     def _dashboard_page(self) -> tuple:
         """Render the main dashboard."""
         # Calculate uptime
-        uptime_secs = int(time.time() - self.start_time)
+        uptime_secs = int(time.time() - (WebAdminHandler._start_time or time.time()))
         uptime = str(timedelta(seconds=uptime_secs))
 
         # Get session info
@@ -597,6 +612,17 @@ class WebAdminHandler:
         protocol = 'wss' if self.config.tls_enabled else 'ws'
         ws_url = f'{protocol}://{local_ip}:{self.config.port}'
 
+        # Bound device info
+        bound_device = 'None'
+        unbind_button = ''
+        if self.config.bound_device_id:
+            bound_device = self.config.bound_device_id[:12] + '...'
+            unbind_button = '''
+            <div class="actions" style="margin-top: 15px;">
+                <button class="btn btn-danger" onclick="if(confirm('Unbind device? This will allow a new device to connect.')) location.href='/admin/unbind'">Unbind Device</button>
+            </div>
+            '''
+
         content = DASHBOARD_CONTENT.format(
             logo_b64=LOGO_B64,
             uptime=uptime,
@@ -605,6 +631,8 @@ class WebAdminHandler:
             working_dir_short=working_dir_short,
             state=state,
             device_lock='Enabled' if self.config.device_lock else 'Disabled',
+            bound_device=bound_device,
+            unbind_button=unbind_button,
             tls_status='Enabled (wss://)' if self.config.tls_enabled else 'Disabled (ws://)',
             session_count=session_count,
             sessions_html=sessions_html,
@@ -618,9 +646,24 @@ class WebAdminHandler:
         page = ADMIN_HTML.format(content=content)
         return (200, {'Content-Type': 'text/html'}, page.encode('utf-8'))
 
+    def _unbind_device(self) -> tuple:
+        """Unbind the current device and redirect back to dashboard."""
+        if self.server and hasattr(self.server, 'unbind_device'):
+            self.server.unbind_device()
+        elif self.config.bound_device_id:
+            # Fallback: directly modify config
+            self.config.bound_device_id = None
+            self.config.save()
+
+        return (
+            302,
+            {'Location': '/admin'},
+            b''
+        )
+
     def _api_status(self) -> tuple:
         """Return status as JSON for API consumers."""
-        uptime_secs = int(time.time() - self.start_time)
+        uptime_secs = int(time.time() - (WebAdminHandler._start_time or time.time()))
         session_count = 0
         if self.server and hasattr(self.server, 'sessions'):
             session_count = len(self.server.sessions)
