@@ -27,17 +27,20 @@ def generate_deep_link(config: ServerConfig, mode: str = "direct") -> str:
     else:
         host = "localhost"
 
+    # Compact payload - single letter keys to minimize QR size
     payload = {
-        "name": config.server_name,
-        "host": host,
-        "port": config.port,
-        "token": config.token,
-        "mode": mode,
-        "ts": int(__import__("time").time() * 1000),
+        "n": config.server_name[:20],  # name (truncated)
+        "h": host,                      # host
+        "p": config.port,               # port
+        "t": config.token,              # token
+        "m": mode[0],                   # mode (d=direct, t=tailscale, s=ssh)
     }
 
-    b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
-    return f"darkcode://server/add?config={b64}"
+    # Use compact JSON (no spaces)
+    b64 = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(',', ':')).encode()
+    ).decode().rstrip("=")
+    return f"darkcode://s?c={b64}"
 
 
 def print_qr_code(config: ServerConfig, console: Console, mode: str = "direct"):
@@ -45,7 +48,7 @@ def print_qr_code(config: ServerConfig, console: Console, mode: str = "direct"):
     deep_link = generate_deep_link(config, mode)
 
     qr = qrcode.QRCode(
-        version=1,
+        version=None,  # Auto-size
         error_correction=qrcode.constants.ERROR_CORRECT_L,
         box_size=1,
         border=1,
@@ -53,17 +56,36 @@ def print_qr_code(config: ServerConfig, console: Console, mode: str = "direct"):
     qr.add_data(deep_link)
     qr.make(fit=True)
 
-    # Convert to string
+    # Use half-block characters for compact display (2 rows per line)
+    # Upper half block: \u2580, Lower half block: \u2584, Full block: \u2588
+    matrix = qr.get_matrix()
+
+    # Pad to even number of rows
+    if len(matrix) % 2 == 1:
+        matrix.append([False] * len(matrix[0]))
+
     lines = []
-    for row in qr.get_matrix():
+    for i in range(0, len(matrix), 2):
         line = ""
-        for cell in row:
-            line += "  " if cell else "\u2588\u2588"
+        for j in range(len(matrix[i])):
+            top = matrix[i][j]
+            bottom = matrix[i + 1][j] if i + 1 < len(matrix) else False
+
+            if top and bottom:
+                line += " "  # Both black = white space (inverted)
+            elif top:
+                line += "\u2584"  # Top black, bottom white = lower half
+            elif bottom:
+                line += "\u2580"  # Top white, bottom black = upper half
+            else:
+                line += "\u2588"  # Both white = full block (inverted)
         lines.append(line)
 
-    # Print with rich
+    # Print
+    console.print()
     for line in lines:
-        console.print(line, style="white on white" if line.startswith("  ") else "black on white")
+        console.print(line)
+    console.print()
 
     return deep_link
 
