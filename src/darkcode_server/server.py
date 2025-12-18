@@ -575,13 +575,20 @@ class DarkCodeServer:
         """Start the Claude Code CLI process.
 
         SECURITY: Uses validated working directory from config.
+        Uses -p (print mode) with stream-json for bidirectional streaming.
         """
         try:
             # Use validated working directory
             working_dir = self.config.safe_working_dir
 
             session.process = subprocess.Popen(
-                ["claude", "--output-format", "stream-json"],
+                [
+                    "claude",
+                    "-p",  # Print mode for non-interactive streaming
+                    "--output-format", "stream-json",
+                    "--input-format", "stream-json",
+                    "--verbose",  # Required for stream-json
+                ],
                 cwd=str(working_dir),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -679,20 +686,41 @@ class DarkCodeServer:
         msg_type = msg.get("type", "")
 
         if msg_type == "assistant":
-            content = msg.get("message", {}).get("content") or msg.get("content")
-            await session.websocket.send(json.dumps({
-                "type": "claude_message",
-                "role": "assistant",
-                "content": content,
-                "timestamp": int(time.time() * 1000),
-            }))
+            # Extract text from Claude's content array structure
+            # Claude returns: {"message": {"content": [{"type": "text", "text": "..."}]}}
+            raw_content = msg.get("message", {}).get("content") or msg.get("content")
 
-            # Save assistant message to chat history
-            if session.chat_session_id and content:
-                self._chat_history.save_message(session.chat_session_id, {
+            # Parse content array to extract text
+            if isinstance(raw_content, list):
+                # Content is array of blocks like [{"type": "text", "text": "..."}]
+                text_parts = []
+                for block in raw_content:
+                    if isinstance(block, dict):
+                        if block.get("type") == "text":
+                            text_parts.append(block.get("text", ""))
+                        elif block.get("type") == "tool_use":
+                            # Tool use blocks are handled separately
+                            pass
+                content = "\n".join(text_parts)
+            elif isinstance(raw_content, str):
+                content = raw_content
+            else:
+                content = str(raw_content) if raw_content else ""
+
+            if content:
+                await session.websocket.send(json.dumps({
+                    "type": "claude_message",
                     "role": "assistant",
                     "content": content,
-                })
+                    "timestamp": int(time.time() * 1000),
+                }))
+
+                # Save assistant message to chat history
+                if session.chat_session_id:
+                    self._chat_history.save_message(session.chat_session_id, {
+                        "role": "assistant",
+                        "content": content,
+                    })
 
         elif msg_type == "tool_use":
             await session.websocket.send(json.dumps({
@@ -715,11 +743,30 @@ class DarkCodeServer:
             await session.websocket.send(json.dumps({
                 "type": "status",
                 "status": "complete",
-                "cost": msg.get("cost_usd"),
+                "cost": msg.get("total_cost_usd") or msg.get("cost_usd"),
                 "duration": msg.get("duration_ms"),
+                "result": msg.get("result"),
             }))
 
+        elif msg_type == "system":
+            # System init message with session info
+            subtype = msg.get("subtype", "")
+            if subtype == "init":
+                await session.websocket.send(json.dumps({
+                    "type": "system_init",
+                    "sessionId": msg.get("session_id"),
+                    "model": msg.get("model"),
+                    "tools": msg.get("tools", []),
+                }))
+            else:
+                await session.websocket.send(json.dumps({
+                    "type": "system",
+                    "subtype": subtype,
+                    "data": msg,
+                }))
+
         else:
+            # Forward unknown message types
             await session.websocket.send(json.dumps({
                 "type": "claude_output",
                 "parsed": msg,
@@ -731,8 +778,13 @@ class DarkCodeServer:
             return False
         return session.process.poll() is None
 
-    async def _write_to_process(self, session: Session, text: str) -> bool:
-        """Write text to Claude process stdin with error handling.
+    async def _write_to_process(self, session: Session, text: str, is_json: bool = False) -> bool:
+        """Write to Claude process stdin with error handling.
+
+        Args:
+            session: The session with the Claude process
+            text: The text to write (user message content)
+            is_json: If True, text is already JSON-formatted; if False, wrap in user message
 
         Returns True if write succeeded, False otherwise.
         """
@@ -750,7 +802,20 @@ class DarkCodeServer:
             return False
 
         try:
-            session.process.stdin.write(text + "\n")
+            # Format as stream-json input if not already JSON
+            if is_json:
+                data = text
+            else:
+                # Wrap in Claude's expected stream-json input format
+                data = json.dumps({
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": text
+                    }
+                })
+
+            session.process.stdin.write(data + "\n")
             session.process.stdin.flush()
             return True
         except BrokenPipeError:

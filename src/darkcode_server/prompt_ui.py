@@ -1,15 +1,30 @@
-"""Simple interactive menu using rich for display."""
+"""Interactive menu using questionary for clean, modern CLI experience."""
 
 import os
 import sys
 from typing import Optional, Tuple
 
+import questionary
+from questionary import Style
 from rich.console import Console
-from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 from rich.table import Table
-from rich.prompt import Prompt, Confirm
+from rich import print as rprint
 
 console = Console()
+
+# Custom style - minimal, clean, no boxes
+custom_style = Style([
+    ('qmark', 'fg:#BD93F9 bold'),       # Purple question mark
+    ('question', 'bold'),                # Question text
+    ('answer', 'fg:#50FA7B bold'),       # Green answer
+    ('pointer', 'fg:#FF79C6 bold'),      # Pink pointer
+    ('highlighted', 'fg:#50FA7B bold'),  # Green highlighted
+    ('selected', 'fg:#BD93F9'),          # Purple selected
+    ('separator', 'fg:#6272A4'),         # Gray separator
+    ('instruction', 'fg:#6272A4'),       # Gray instructions
+    ('text', ''),                        # Normal text
+])
 
 
 def clear_screen():
@@ -18,51 +33,54 @@ def clear_screen():
 
 
 def show_header():
-    """Show the app header."""
-    console.print(Panel(
-        "[bold magenta]DARKCODE SERVER[/]",
-        border_style="magenta",
-    ))
+    """Show minimal app header."""
     console.print()
+    console.print("[bold magenta]DARKCODE SERVER[/]", justify="center")
+    console.print("[dim]Remote Claude Code Control[/]", justify="center")
+    console.print()
+
+
+def fancy_progress(description: str, steps: int = 10):
+    """Show a fancy progress animation."""
+    import time
+    with Progress(
+        SpinnerColumn("dots"),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(bar_width=20),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task(description, total=steps)
+        for _ in range(steps):
+            time.sleep(0.05)
+            progress.advance(task)
 
 
 def show_main_menu() -> Optional[str]:
     """Show main menu and get selection."""
-    table = Table(show_header=False, box=None, padding=(0, 2))
-    table.add_column("", style="bold cyan", width=4)
-    table.add_column("", style="white")
-
-    options = [
-        ("1", "Start Server"),
-        ("2", "Server Status"),
-        ("3", "Show QR Code"),
-        ("4", "Guest Codes"),
-        ("5", "Configuration"),
-        ("6", "Security Settings"),
-        ("7", "Setup Wizard"),
-        ("q", "Quit"),
+    choices = [
+        questionary.Choice("Start Server", value="start"),
+        questionary.Choice("Server Status", value="status"),
+        questionary.Choice("Show QR Code", value="qr"),
+        questionary.Choice("Guest Codes", value="guest"),
+        questionary.Choice("Configuration", value="config"),
+        questionary.Choice("Security Settings", value="security"),
+        questionary.Choice("Setup Wizard", value="setup"),
+        questionary.Separator(),
+        questionary.Choice("Quit", value="quit"),
     ]
 
-    for key, label in options:
-        table.add_row(f"[{key}]", label)
+    result = questionary.select(
+        "What would you like to do?",
+        choices=choices,
+        style=custom_style,
+        qmark="",
+        pointer="",
+        use_shortcuts=True,
+        use_arrow_keys=True,
+    ).ask()
 
-    console.print(Panel(table, title="[bold]Menu[/]", border_style="cyan"))
-
-    choice = Prompt.ask("\n[cyan]Select[/]", choices=["1", "2", "3", "4", "5", "6", "7", "q"], default="1")
-
-    if choice == "q":
-        return None
-
-    actions = {
-        "1": "start",
-        "2": "status",
-        "3": "qr",
-        "4": "guest",
-        "5": "config",
-        "6": "security",
-        "7": "setup",
-    }
-    return actions.get(choice)
+    return None if result == "quit" else result
 
 
 def show_connection_menu() -> Optional[str]:
@@ -72,54 +90,52 @@ def show_connection_menu() -> Optional[str]:
 
     tailscale_ip = config.get_tailscale_ip()
 
-    console.print("\n[bold cyan]Connection Mode[/]\n")
+    choices = [
+        questionary.Choice("Direct LAN - Local network connection", value="direct"),
+    ]
 
-    table = Table(show_header=False, box=None, padding=(0, 2))
-    table.add_column("", style="bold cyan", width=4)
-    table.add_column("", style="white")
-
-    table.add_row("[1]", "Direct LAN - Connect over local network")
     if tailscale_ip:
-        table.add_row("[2]", f"Tailscale ({tailscale_ip}) - Secure mesh VPN")
+        choices.append(questionary.Choice(f"Tailscale ({tailscale_ip}) - Secure mesh VPN", value="tailscale"))
     else:
-        table.add_row("[2]", "Tailscale - Not detected")
-    table.add_row("[3]", "SSH Tunnel - Localhost only, most secure")
-    table.add_row("[b]", "Back")
+        choices.append(questionary.Choice("Tailscale - Not detected", value="tailscale", disabled="not available"))
 
-    console.print(table)
+    choices.extend([
+        questionary.Choice("SSH Tunnel - Localhost only, most secure", value="ssh"),
+        questionary.Separator(),
+        questionary.Choice("Back", value="back"),
+    ])
 
-    choice = Prompt.ask("\n[cyan]Select[/]", choices=["1", "2", "3", "b"], default="1")
+    result = questionary.select(
+        "Connection mode:",
+        choices=choices,
+        style=custom_style,
+        qmark="",
+        pointer="",
+    ).ask()
 
-    if choice == "b":
-        return None
-
-    modes = {"1": "direct", "2": "tailscale", "3": "ssh"}
-    return modes.get(choice)
+    return None if result == "back" else result
 
 
 def show_guest_menu() -> Optional[str]:
     """Show guest code management menu."""
-    console.print("\n[bold green]Guest Access Codes[/]\n")
+    choices = [
+        questionary.Choice("Create New Code", value="guest_create"),
+        questionary.Choice("List All Codes", value="guest_list"),
+        questionary.Choice("Revoke a Code", value="guest_revoke"),
+        questionary.Choice("Show QR for Code", value="guest_qr"),
+        questionary.Separator(),
+        questionary.Choice("Back", value="back"),
+    ]
 
-    table = Table(show_header=False, box=None, padding=(0, 2))
-    table.add_column("", style="bold cyan", width=4)
-    table.add_column("", style="white")
+    result = questionary.select(
+        "Guest access:",
+        choices=choices,
+        style=custom_style,
+        qmark="",
+        pointer="",
+    ).ask()
 
-    table.add_row("[1]", "Create New Code")
-    table.add_row("[2]", "List All Codes")
-    table.add_row("[3]", "Revoke a Code")
-    table.add_row("[4]", "Show QR for Code")
-    table.add_row("[b]", "Back")
-
-    console.print(table)
-
-    choice = Prompt.ask("\n[cyan]Select[/]", choices=["1", "2", "3", "4", "b"], default="b")
-
-    if choice == "b":
-        return None
-
-    actions = {"1": "guest_create", "2": "guest_list", "3": "guest_revoke", "4": "guest_qr"}
-    return actions.get(choice)
+    return None if result == "back" else result
 
 
 def show_security_menu() -> Optional[str]:
@@ -127,50 +143,38 @@ def show_security_menu() -> Optional[str]:
     from darkcode_server.config import ServerConfig
     config = ServerConfig.load()
 
-    console.print("\n[bold red]Security Settings[/]\n")
+    # Show current status first
+    console.print()
+    console.print("[bold]Current Security Status[/]")
+    tls = "[green]ON[/]" if config.tls_enabled else "[yellow]OFF[/]"
+    mtls = "[green]ON[/]" if config.mtls_enabled else "[dim]OFF[/]"
+    device_lock = "[green]ON[/]" if config.device_lock else "[yellow]OFF[/]"
+    bound = config.bound_device_id[:12] + "..." if config.bound_device_id else "[dim]none[/]"
 
-    # Current status
-    status_table = Table(show_header=False, box=None, padding=(0, 1))
-    status_table.add_column("Setting", style="cyan")
-    status_table.add_column("Value")
-
-    status_table.add_row("TLS", "[green]enabled[/]" if config.tls_enabled else "[yellow]disabled[/]")
-    status_table.add_row("mTLS", "[green]enabled[/]" if config.mtls_enabled else "[dim]disabled[/]")
-    status_table.add_row("Device Lock", "[green]enabled[/]" if config.device_lock else "[yellow]disabled[/]")
-    status_table.add_row("Bound Device", config.bound_device_id[:12] + "..." if config.bound_device_id else "[dim]none[/]")
-
-    console.print(status_table)
+    console.print(f"  TLS: {tls}  |  mTLS: {mtls}  |  Device Lock: {device_lock}")
+    console.print(f"  Bound Device: {bound}")
     console.print()
 
-    # Options
-    table = Table(show_header=False, box=None, padding=(0, 2))
-    table.add_column("", style="bold cyan", width=4)
-    table.add_column("", style="white")
+    choices = [
+        questionary.Choice(f"Toggle TLS (currently {'ON' if config.tls_enabled else 'OFF'})", value="security_tls"),
+        questionary.Choice(f"Toggle mTLS (currently {'ON' if config.mtls_enabled else 'OFF'})", value="security_mtls"),
+        questionary.Choice(f"Toggle Device Lock (currently {'ON' if config.device_lock else 'OFF'})", value="security_device_lock"),
+        questionary.Choice("Reset Auth Token", value="security_reset_token"),
+        questionary.Choice("View Blocked IPs", value="security_blocked"),
+        questionary.Choice("Unbind Device", value="security_unbind"),
+        questionary.Separator(),
+        questionary.Choice("Back", value="back"),
+    ]
 
-    table.add_row("[1]", "Toggle TLS")
-    table.add_row("[2]", "Toggle mTLS")
-    table.add_row("[3]", "Toggle Device Lock")
-    table.add_row("[4]", "Reset Auth Token")
-    table.add_row("[5]", "View Blocked IPs")
-    table.add_row("[6]", "Unbind Device")
-    table.add_row("[b]", "Back")
+    result = questionary.select(
+        "Security settings:",
+        choices=choices,
+        style=custom_style,
+        qmark="",
+        pointer="",
+    ).ask()
 
-    console.print(table)
-
-    choice = Prompt.ask("\n[cyan]Select[/]", choices=["1", "2", "3", "4", "5", "6", "b"], default="b")
-
-    if choice == "b":
-        return None
-
-    actions = {
-        "1": "security_tls",
-        "2": "security_mtls",
-        "3": "security_device_lock",
-        "4": "security_reset_token",
-        "5": "security_blocked",
-        "6": "security_unbind",
-    }
-    return actions.get(choice)
+    return None if result == "back" else result
 
 
 def execute_action(action: str) -> bool:
@@ -179,92 +183,142 @@ def execute_action(action: str) -> bool:
 
     if action == "status":
         config = ServerConfig.load()
-        console.print("\n[bold cyan]Server Status[/]\n")
+        fancy_progress("Loading status...", 5)
 
-        table = Table(show_header=False, box=None)
-        table.add_column("Key", style="cyan")
-        table.add_column("Value")
-
-        table.add_row("Port", str(config.port))
-        table.add_row("Working Dir", str(config.working_dir))
-        table.add_row("Server Name", config.server_name)
-        table.add_row("TLS", "enabled" if config.tls_enabled else "disabled")
-        table.add_row("Device Lock", "enabled" if config.device_lock else "disabled")
+        console.print()
+        console.print("[bold cyan]Server Status[/]")
+        console.print()
+        console.print(f"  Port:        [white]{config.port}[/]")
+        console.print(f"  Working Dir: [white]{config.working_dir}[/]")
+        console.print(f"  Server Name: [white]{config.server_name}[/]")
+        console.print(f"  TLS:         {'[green]enabled[/]' if config.tls_enabled else '[yellow]disabled[/]'}")
+        console.print(f"  Device Lock: {'[green]enabled[/]' if config.device_lock else '[yellow]disabled[/]'}")
 
         tailscale_ip = config.get_tailscale_ip()
-        table.add_row("Tailscale", tailscale_ip if tailscale_ip else "not detected")
-
-        console.print(table)
+        console.print(f"  Tailscale:   {tailscale_ip if tailscale_ip else '[dim]not detected[/]'}")
 
         # Check daemon
         try:
             from darkcode_server.daemon import DarkCodeDaemon
             pid = DarkCodeDaemon.get_running_pid(config)
             if pid:
-                console.print(f"\n[green]Daemon running (PID {pid})[/]")
+                console.print(f"\n  [green]Daemon running (PID {pid})[/]")
             else:
-                console.print("\n[dim]Daemon not running[/]")
+                console.print("\n  [dim]Daemon not running[/]")
         except:
             pass
 
-        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        console.print()
+        questionary.press_any_key_to_continue(
+            message="Press any key to continue...",
+            style=custom_style,
+        ).ask()
         return True
 
     elif action == "qr":
-        # Actually show the QR code
+        fancy_progress("Generating QR code...", 8)
         from darkcode_server.qrcode import print_server_info
         config = ServerConfig.load()
         console.print()
         print_server_info(config, console)
-        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        console.print()
+        questionary.press_any_key_to_continue(
+            message="Press any key to continue...",
+            style=custom_style,
+        ).ask()
         return True
 
     elif action == "config":
         config = ServerConfig.load()
-        console.print("\n[bold cyan]Configuration[/]\n")
 
-        table = Table(show_header=False, box=None)
-        table.add_column("Key", style="cyan")
-        table.add_column("Value")
+        console.print()
+        console.print("[bold cyan]Current Configuration[/]")
+        console.print()
+        console.print(f"  Port:            [white]{config.port}[/]")
+        console.print(f"  Working Dir:     [white]{config.working_dir}[/]")
+        console.print(f"  Server Name:     [white]{config.server_name}[/]")
+        console.print(f"  Config Dir:      [white]{config.config_dir}[/]")
+        console.print(f"  Token:           [white]{config.token[:4]}{'*' * 16}[/]")
+        console.print(f"  Max Sessions/IP: [white]{config.max_sessions_per_ip}[/]")
+        console.print()
 
-        table.add_row("Port", str(config.port))
-        table.add_row("Working Dir", str(config.working_dir))
-        table.add_row("Server Name", config.server_name)
-        table.add_row("Config Dir", str(config.config_dir))
-        table.add_row("Token", config.token[:4] + "*" * 16)
-        table.add_row("Max Sessions/IP", str(config.max_sessions_per_ip))
+        if questionary.confirm("Edit configuration?", default=False, style=custom_style, qmark="").ask():
+            new_port = questionary.text(
+                "Port:",
+                default=str(config.port),
+                style=custom_style,
+                qmark="",
+            ).ask()
 
-        console.print(table)
+            new_dir = questionary.path(
+                "Working directory:",
+                default=str(config.working_dir),
+                style=custom_style,
+                qmark="",
+            ).ask()
 
-        if Confirm.ask("\n[cyan]Edit configuration?[/]", default=False):
-            new_port = Prompt.ask("Port", default=str(config.port))
-            new_dir = Prompt.ask("Working directory", default=str(config.working_dir))
-            new_name = Prompt.ask("Server name", default=config.server_name)
+            new_name = questionary.text(
+                "Server name:",
+                default=config.server_name,
+                style=custom_style,
+                qmark="",
+            ).ask()
 
-            from pathlib import Path
-            config.port = int(new_port)
-            config.working_dir = Path(new_dir)
-            config.server_name = new_name
-            config.save()
+            if new_port and new_dir and new_name:
+                from pathlib import Path
+                config.port = int(new_port)
+                config.working_dir = Path(new_dir)
+                config.server_name = new_name
+                config.save()
 
-            console.print("\n[green]Configuration saved![/]")
+                fancy_progress("Saving configuration...", 5)
+                console.print("\n[green]Configuration saved![/]")
 
-        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        questionary.press_any_key_to_continue(
+            message="Press any key to continue...",
+            style=custom_style,
+        ).ask()
         return True
 
     elif action == "guest_create":
-        config = ServerConfig.load()
-        from darkcode_server.security import GuestAccessManager
+        console.print()
+        console.print("[bold green]Create Guest Code[/]")
+        console.print()
 
-        console.print("\n[bold green]Create Guest Code[/]\n")
+        name = questionary.text(
+            "Friend's name:",
+            style=custom_style,
+            qmark="",
+        ).ask()
 
-        name = Prompt.ask("Friend's name")
         if not name:
             return True
 
-        expires = Prompt.ask("Expires in hours (0=never)", default="24")
-        max_uses = Prompt.ask("Max uses (empty=unlimited)", default="")
-        read_only = Confirm.ask("Read-only access?", default=False)
+        expires = questionary.text(
+            "Expires in hours (0=never):",
+            default="24",
+            style=custom_style,
+            qmark="",
+        ).ask()
+
+        max_uses = questionary.text(
+            "Max uses (empty=unlimited):",
+            default="",
+            style=custom_style,
+            qmark="",
+        ).ask()
+
+        read_only = questionary.confirm(
+            "Read-only access?",
+            default=False,
+            style=custom_style,
+            qmark="",
+        ).ask()
+
+        fancy_progress("Creating guest code...", 8)
+
+        config = ServerConfig.load()
+        from darkcode_server.security import GuestAccessManager
 
         guest_mgr = GuestAccessManager(config.config_dir / "guests.db")
         result = guest_mgr.create_guest_code(
@@ -274,71 +328,95 @@ def execute_action(action: str) -> bool:
             max_uses=int(max_uses) if max_uses else None,
         )
 
-        console.print(f"\n[green]Created![/] Code: [bold]{result['code']}[/]")
-        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        console.print(f"\n[green]Created![/] Code: [bold white]{result['code']}[/]")
+        questionary.press_any_key_to_continue(
+            message="Press any key to continue...",
+            style=custom_style,
+        ).ask()
         return True
 
     elif action == "guest_list":
         config = ServerConfig.load()
         from darkcode_server.security import GuestAccessManager
 
+        fancy_progress("Loading guest codes...", 5)
+
         guest_mgr = GuestAccessManager(config.config_dir / "guests.db")
         codes = guest_mgr.list_codes()
 
-        console.print("\n[bold green]Guest Codes[/]\n")
+        console.print()
+        console.print("[bold green]Guest Codes[/]")
+        console.print()
 
         if not codes:
             console.print("[dim]No guest codes found.[/]")
         else:
-            table = Table(show_header=True, box=None)
-            table.add_column("Code", style="bold cyan")
-            table.add_column("Name")
-            table.add_column("Status")
-
             for code in codes:
                 status = "[green]active[/]"
                 if not code.get("is_active"):
                     status = "[red]revoked[/]"
                 elif code.get("expired"):
                     status = "[yellow]expired[/]"
-                table.add_row(code["code"], code["name"], status)
+                console.print(f"  [bold cyan]{code['code']}[/] - {code['name']} ({status})")
 
-            console.print(table)
-
-        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        console.print()
+        questionary.press_any_key_to_continue(
+            message="Press any key to continue...",
+            style=custom_style,
+        ).ask()
         return True
 
     elif action == "guest_revoke":
+        code = questionary.text(
+            "Code to revoke:",
+            style=custom_style,
+            qmark="",
+        ).ask()
+
+        if not code:
+            return True
+
         config = ServerConfig.load()
         from darkcode_server.security import GuestAccessManager
 
-        code = Prompt.ask("[cyan]Code to revoke[/]")
-        if not code:
-            return True
+        fancy_progress("Revoking code...", 5)
 
         guest_mgr = GuestAccessManager(config.config_dir / "guests.db")
         if guest_mgr.revoke_code(code):
-            console.print(f"[green]Revoked:[/] {code.upper()}")
+            console.print(f"\n[green]Revoked:[/] {code.upper()}")
         else:
-            console.print(f"[red]Not found:[/] {code}")
+            console.print(f"\n[red]Not found:[/] {code}")
 
-        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        questionary.press_any_key_to_continue(
+            message="Press any key to continue...",
+            style=custom_style,
+        ).ask()
         return True
 
     elif action == "guest_qr":
-        from darkcode_server.cli import guest_qr as show_guest_qr
-        from click.testing import CliRunner
+        code = questionary.text(
+            "Code for QR:",
+            style=custom_style,
+            qmark="",
+        ).ask()
 
-        code = Prompt.ask("[cyan]Code for QR[/]")
         if not code:
             return True
+
+        fancy_progress("Generating QR code...", 8)
+
+        from darkcode_server.cli import guest_qr as show_guest_qr
+        from click.testing import CliRunner
 
         runner = CliRunner()
         result = runner.invoke(show_guest_qr, [code], standalone_mode=False)
         if result.output:
             console.print(result.output)
 
-        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        questionary.press_any_key_to_continue(
+            message="Press any key to continue...",
+            style=custom_style,
+        ).ask()
         return True
 
     elif action == "security_tls":
@@ -346,12 +424,17 @@ def execute_action(action: str) -> bool:
         config.tls_enabled = not config.tls_enabled
         config.save()
 
+        fancy_progress("Updating TLS setting...", 5)
+
         if config.tls_enabled:
             console.print("\n[green]TLS enabled - Server will use wss://[/]")
         else:
             console.print("\n[yellow]TLS disabled - Server will use ws://[/]")
 
-        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        questionary.press_any_key_to_continue(
+            message="Press any key to continue...",
+            style=custom_style,
+        ).ask()
         return True
 
     elif action == "security_mtls":
@@ -361,12 +444,17 @@ def execute_action(action: str) -> bool:
             config.tls_enabled = True
         config.save()
 
+        fancy_progress("Updating mTLS setting...", 5)
+
         if config.mtls_enabled:
             console.print("\n[green]mTLS enabled - Clients must present certificates[/]")
         else:
             console.print("\n[dim]mTLS disabled[/]")
 
-        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        questionary.press_any_key_to_continue(
+            message="Press any key to continue...",
+            style=custom_style,
+        ).ask()
         return True
 
     elif action == "security_device_lock":
@@ -374,29 +462,45 @@ def execute_action(action: str) -> bool:
         config.device_lock = not config.device_lock
         config.save()
 
+        fancy_progress("Updating device lock...", 5)
+
         if config.device_lock:
             console.print("\n[green]Device lock enabled[/]")
         else:
             console.print("\n[yellow]Device lock disabled[/]")
 
-        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        questionary.press_any_key_to_continue(
+            message="Press any key to continue...",
+            style=custom_style,
+        ).ask()
         return True
 
     elif action == "security_reset_token":
-        if Confirm.ask("\n[yellow]Generate new auth token? Current connections will be invalidated.[/]"):
+        if questionary.confirm(
+            "Generate new auth token? Current connections will be invalidated.",
+            default=False,
+            style=custom_style,
+            qmark="",
+        ).ask():
             import secrets
             config = ServerConfig.load()
             config.token = secrets.token_urlsafe(24)
             config.save()
 
+            fancy_progress("Generating new token...", 8)
             console.print(f"\n[green]New token:[/] {config.token}")
 
-        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        questionary.press_any_key_to_continue(
+            message="Press any key to continue...",
+            style=custom_style,
+        ).ask()
         return True
 
     elif action == "security_blocked":
         config = ServerConfig.load()
         from darkcode_server.security import PersistentRateLimiter
+
+        fancy_progress("Loading blocked IPs...", 5)
 
         db_path = config.config_dir / "security.db"
         if not db_path.exists():
@@ -405,19 +509,18 @@ def execute_action(action: str) -> bool:
             rate_limiter = PersistentRateLimiter(db_path)
             blocked = rate_limiter.get_blocked()
 
+            console.print()
             if not blocked:
-                console.print("\n[green]No blocked IPs or devices[/]")
+                console.print("[green]No blocked IPs or devices[/]")
             else:
-                table = Table(title="Blocked")
-                table.add_column("Identifier", style="red")
-                table.add_column("Type")
-
+                console.print("[bold red]Blocked[/]")
                 for b in blocked:
-                    table.add_row(b["identifier"][:20], b["identifier_type"])
+                    console.print(f"  {b['identifier'][:20]} ({b['identifier_type']})")
 
-                console.print(table)
-
-        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        questionary.press_any_key_to_continue(
+            message="Press any key to continue...",
+            style=custom_style,
+        ).ask()
         return True
 
     elif action == "security_unbind":
@@ -425,12 +528,16 @@ def execute_action(action: str) -> bool:
 
         if not config.bound_device_id:
             console.print("\n[yellow]No device is currently bound.[/]")
-        elif Confirm.ask("\n[yellow]Unbind current device?[/]"):
+        elif questionary.confirm("Unbind current device?", default=False, style=custom_style, qmark="").ask():
             config.bound_device_id = None
             config.save()
+            fancy_progress("Unbinding device...", 5)
             console.print("[green]Device unbound.[/]")
 
-        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        questionary.press_any_key_to_continue(
+            message="Press any key to continue...",
+            style=custom_style,
+        ).ask()
         return True
 
     return True
