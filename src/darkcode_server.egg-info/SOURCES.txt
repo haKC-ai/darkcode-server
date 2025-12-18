@@ -10,6 +10,7 @@ src/darkcode_server/qrcode.py
 src/darkcode_server/security.py
 src/darkcode_server/server.py
 src/darkcode_server/tui.py
+src/darkcode_server/web_admin.py
 src/darkcode_server.egg-info/PKG-INFO
 src/darkcode_server.egg-info/SOURCES.txt
 src/darkcode_server.egg-info/dependency_links.txt
