@@ -534,13 +534,19 @@ class DarkCodeServer:
 
         def read_line():
             if session.process and session.process.stdout:
-                return session.process.stdout.readline()
+                try:
+                    return session.process.stdout.readline()
+                except (IOError, OSError):
+                    return ""
             return ""
 
         while session.process and session.process.poll() is None:
             try:
                 line = await loop.run_in_executor(None, read_line)
                 if not line:
+                    # Check if process died
+                    if session.process and session.process.poll() is not None:
+                        break
                     await asyncio.sleep(0.01)
                     continue
 
@@ -559,6 +565,33 @@ class DarkCodeServer:
 
             except Exception:
                 break
+
+        # Process has exited - notify client and offer recovery
+        exit_code = session.process.poll() if session.process else -1
+        session.is_processing = False
+
+        # Read any stderr output
+        stderr_output = ""
+        if session.process and session.process.stderr:
+            try:
+                stderr_output = session.process.stderr.read() or ""
+            except Exception:
+                pass
+
+        # Send error to client with recovery action
+        try:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Claude process exited (code {exit_code})" + (f": {stderr_output[:200]}" if stderr_output else ""),
+                "recoverable": True,
+                "action": "reconnect",
+            }))
+            await session.websocket.send(json.dumps({
+                "type": "status",
+                "status": "closed",
+            }))
+        except Exception:
+            pass  # WebSocket might already be closed
 
     async def _handle_claude_output(self, session: Session, msg: dict):
         """Handle parsed output from Claude."""
@@ -603,6 +636,51 @@ class DarkCodeServer:
                 "parsed": msg,
             }))
 
+    def _is_process_alive(self, session: Session) -> bool:
+        """Check if the Claude process is still running."""
+        if not session.process:
+            return False
+        return session.process.poll() is None
+
+    async def _write_to_process(self, session: Session, text: str) -> bool:
+        """Write text to Claude process stdin with error handling.
+
+        Returns True if write succeeded, False otherwise.
+        """
+        if not session.process or not session.process.stdin:
+            return False
+
+        # Check if process is still alive
+        if not self._is_process_alive(session):
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": "Claude process has terminated. Please reconnect.",
+                "recoverable": True,
+                "action": "reconnect",
+            }))
+            return False
+
+        try:
+            session.process.stdin.write(text + "\n")
+            session.process.stdin.flush()
+            return True
+        except BrokenPipeError:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": "Claude process closed unexpectedly. Please reconnect.",
+                "recoverable": True,
+                "action": "reconnect",
+            }))
+            return False
+        except (IOError, OSError) as e:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Failed to communicate with Claude: {e}",
+                "recoverable": True,
+                "action": "reconnect",
+            }))
+            return False
+
     async def _handle_message(self, session: Session, msg: dict):
         """Handle an authenticated message.
 
@@ -631,21 +709,23 @@ class DarkCodeServer:
                 }))
                 return
 
-            if text and session.process and session.process.stdin:
-                session.is_processing = True
-                session.last_active = time.time()
-                session.message_count += 1
-                # Text goes to Claude's stdin - Claude handles its own sandboxing
-                session.process.stdin.write(text + "\n")
-                session.process.stdin.flush()
-                await session.websocket.send(json.dumps({
-                    "type": "status",
-                    "status": "processing",
-                }))
+            if text:
+                # Check process health and write
+                if await self._write_to_process(session, text):
+                    session.is_processing = True
+                    session.last_active = time.time()
+                    session.message_count += 1
+                    await session.websocket.send(json.dumps({
+                        "type": "status",
+                        "status": "processing",
+                    }))
 
         elif msg_type == "abort":
-            if session.process:
-                session.process.send_signal(subprocess.signal.SIGINT)
+            if session.process and self._is_process_alive(session):
+                try:
+                    session.process.send_signal(subprocess.signal.SIGINT)
+                except (ProcessLookupError, OSError):
+                    pass  # Process already dead
                 session.is_processing = False
                 await session.websocket.send(json.dumps({
                     "type": "status",
@@ -653,14 +733,10 @@ class DarkCodeServer:
                 }))
 
         elif msg_type == "accept_edit":
-            if session.process and session.process.stdin:
-                session.process.stdin.write("y\n")
-                session.process.stdin.flush()
+            await self._write_to_process(session, "y")
 
         elif msg_type == "reject_edit":
-            if session.process and session.process.stdin:
-                session.process.stdin.write("n\n")
-                session.process.stdin.flush()
+            await self._write_to_process(session, "n")
 
         elif msg_type == "get_session_info":
             await session.websocket.send(json.dumps({
@@ -669,6 +745,7 @@ class DarkCodeServer:
                 "workingDir": str(session.working_dir),
                 "isProcessing": session.is_processing,
                 "messageCount": session.message_count,
+                "processAlive": self._is_process_alive(session),
             }))
 
     async def _destroy_session(self, session: Session):
