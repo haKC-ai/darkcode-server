@@ -1,0 +1,11 @@
+# .mailmap - Canonical author mapping for git
+# This file ensures all commits are attributed to the correct author
+# Format: Canonical Name <canonical@email> <alias@email>
+#         Canonical Name <canonical@email> Alias Name <alias@email>
+
+# Map all variations to the canonical author
+Corian (Cory) Kennedy <cory@darkintel.io> <cory@hakc.ai>
+Corian (Cory) Kennedy <cory@darkintel.io> NoDataFound <noreply@users.noreply.github.com>
+Corian (Cory) Kennedy <cory@darkintel.io> noreply <noreply@anthropic.com>
+Corian (Cory) Kennedy <cory@darkintel.io> Claude <noreply@anthropic.com>
+Corian (Cory) Kennedy <cory@darkintel.io> claude <noreply@anthropic.com>
