@@ -527,12 +527,6 @@ class WebAdminHandler:
 
         # Route requests
         if clean_path == '/admin' or clean_path == '/admin/':
-            # Check for session token in URL (fallback for cookie issues)
-            url_token = query_params.get('session', [None])[0]
-            if url_token and url_token in WebAdminHandler._authenticated_sessions:
-                logging.info(f"[WebAdmin] Auth via URL token: {url_token[:8]}...")
-                return self._dashboard_page(session_token=url_token)
-
             is_auth = self._is_authenticated(cookies)
             logging.info(f"[WebAdmin] Auth check result: {is_auth}")
             if is_auth:
@@ -562,15 +556,28 @@ class WebAdminHandler:
                     session_cookie = self._generate_session_cookie()
                     WebAdminHandler._authenticated_sessions.add(session_cookie)
                     logging.info(f"Login successful, setting cookie: {session_cookie[:8]}...")
-                    # Redirect to dashboard with session token in URL
-                    # The dashboard page will set the cookie for future requests
+                    # Return HTML page that sets cookie via JS then redirects
+                    # This works around websockets library issues with Set-Cookie on 302
+                    redirect_html = f'''<!DOCTYPE html>
+<html>
+<head><title>Redirecting...</title></head>
+<body style="background:#0a0a0f;color:#e0e0e0;font-family:monospace;display:flex;justify-content:center;align-items:center;height:100vh;">
+<div style="text-align:center;">
+<p>Logging in...</p>
+</div>
+<script>
+document.cookie = "darkcode_admin_session={session_cookie}; path=/; max-age=86400; samesite=lax";
+window.location.href = "/admin";
+</script>
+</body>
+</html>'''
                     return (
-                        302,
+                        200,
                         {
-                            'Location': f'/admin?session={session_cookie}',
+                            'Content-Type': 'text/html; charset=utf-8',
                             'Cache-Control': 'no-store'
                         },
-                        b''
+                        redirect_html.encode('utf-8')
                     )
                 else:
                     logging.warning(f"Login failed - PIN mismatch")
@@ -617,12 +624,8 @@ class WebAdminHandler:
         page = ADMIN_HTML.format(content=content)
         return (200, {'Content-Type': 'text/html'}, page.encode('utf-8'))
 
-    def _dashboard_page(self, session_token: str = None) -> tuple:
-        """Render the main dashboard.
-
-        Args:
-            session_token: If provided, inject JS to set cookie and clean URL
-        """
+    def _dashboard_page(self) -> tuple:
+        """Render the main dashboard."""
         # Calculate uptime
         uptime_secs = int(time.time() - (WebAdminHandler._start_time or time.time()))
         uptime = str(timedelta(seconds=uptime_secs))
@@ -703,20 +706,6 @@ class WebAdminHandler:
             tailscale_row=tailscale_row,
             ws_url=ws_url,
         )
-
-        # If session token provided, inject JS to set cookie and clean URL
-        if session_token:
-            cookie_script = f'''
-<script>
-// Set cookie for future requests
-document.cookie = "darkcode_admin_session={session_token}; path=/; max-age=86400; samesite=lax";
-// Clean the URL (remove session param)
-if (window.history.replaceState) {{
-    window.history.replaceState(null, null, '/admin');
-}}
-</script>
-'''
-            content = cookie_script + content
 
         page = ADMIN_HTML.format(content=content)
         return (200, {'Content-Type': 'text/html'}, page.encode('utf-8'))
