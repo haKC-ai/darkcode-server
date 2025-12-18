@@ -581,14 +581,19 @@ class DarkCodeServer:
             # Use validated working directory
             working_dir = self.config.safe_working_dir
 
+            # Build command with streaming and permission handling
+            cmd = [
+                "claude",
+                "-p",  # Print mode for non-interactive streaming
+                "--output-format", "stream-json",
+                "--input-format", "stream-json",
+                "--verbose",  # Required for stream-json
+                "--include-partial-messages",  # Enable streaming deltas
+                "--permission-mode", self.config.permission_mode,
+            ]
+
             session.process = subprocess.Popen(
-                [
-                    "claude",
-                    "-p",  # Print mode for non-interactive streaming
-                    "--output-format", "stream-json",
-                    "--input-format", "stream-json",
-                    "--verbose",  # Required for stream-json
-                ],
+                cmd,
                 cwd=str(working_dir),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -685,7 +690,47 @@ class DarkCodeServer:
         """Handle parsed output from Claude."""
         msg_type = msg.get("type", "")
 
-        if msg_type == "assistant":
+        if msg_type == "stream_event":
+            # Handle streaming deltas for real-time text updates
+            event = msg.get("event", {})
+            event_type = event.get("type", "")
+
+            if event_type == "content_block_delta":
+                delta = event.get("delta", {})
+                if delta.get("type") == "text_delta":
+                    text = delta.get("text", "")
+                    if text:
+                        await session.websocket.send(json.dumps({
+                            "type": "stream_delta",
+                            "text": text,
+                            "index": event.get("index", 0),
+                        }))
+
+            elif event_type == "content_block_start":
+                content_block = event.get("content_block", {})
+                await session.websocket.send(json.dumps({
+                    "type": "stream_start",
+                    "index": event.get("index", 0),
+                    "blockType": content_block.get("type", "text"),
+                }))
+
+            elif event_type == "content_block_stop":
+                await session.websocket.send(json.dumps({
+                    "type": "stream_stop",
+                    "index": event.get("index", 0),
+                }))
+
+            elif event_type == "message_start":
+                await session.websocket.send(json.dumps({
+                    "type": "message_start",
+                }))
+
+            elif event_type == "message_stop":
+                await session.websocket.send(json.dumps({
+                    "type": "message_stop",
+                }))
+
+        elif msg_type == "assistant":
             # Extract text from Claude's content array structure
             # Claude returns: {"message": {"content": [{"type": "text", "text": "..."}]}}
             raw_content = msg.get("message", {}).get("content") or msg.get("content")

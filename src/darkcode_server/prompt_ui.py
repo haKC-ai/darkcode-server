@@ -1,30 +1,14 @@
-"""Interactive menu using questionary for clean, modern CLI experience."""
+"""Interactive menu using rich for clean, modern CLI experience."""
 
 import os
 import sys
 from typing import Optional, Tuple
 
-import questionary
-from questionary import Style
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
-from rich.table import Table
-from rich import print as rprint
+from rich.prompt import Prompt, Confirm, IntPrompt
 
 console = Console()
-
-# Custom style - minimal, clean, no boxes
-custom_style = Style([
-    ('qmark', 'fg:#BD93F9 bold'),       # Purple question mark
-    ('question', 'bold'),                # Question text
-    ('answer', 'fg:#50FA7B bold'),       # Green answer
-    ('pointer', 'fg:#FF79C6 bold'),      # Pink pointer
-    ('highlighted', 'fg:#50FA7B bold'),  # Green highlighted
-    ('selected', 'fg:#BD93F9'),          # Purple selected
-    ('separator', 'fg:#6272A4'),         # Gray separator
-    ('instruction', 'fg:#6272A4'),       # Gray instructions
-    ('text', ''),                        # Normal text
-])
 
 
 def clear_screen():
@@ -56,30 +40,61 @@ def fancy_progress(description: str, steps: int = 10):
             progress.advance(task)
 
 
+def show_menu(title: str, options: list, back_option: bool = False) -> Optional[str]:
+    """Show a menu and get selection.
+
+    Args:
+        title: Menu title
+        options: List of (key, value, description) tuples
+        back_option: Whether to show a back option
+
+    Returns:
+        Selected value or None if back/quit
+    """
+    console.print(f"\n[bold cyan]{title}[/]\n")
+
+    for key, value, desc in options:
+        console.print(f"  [bold cyan][{key}][/] {desc}")
+
+    if back_option:
+        console.print(f"  [bold cyan][b][/] Back")
+
+    console.print()
+
+    valid_keys = [o[0] for o in options]
+    if back_option:
+        valid_keys.append("b")
+
+    choice = Prompt.ask(
+        "[cyan]Select[/]",
+        choices=valid_keys,
+        default=options[0][0] if options else "b"
+    )
+
+    if choice == "b":
+        return None
+
+    for key, value, desc in options:
+        if key == choice:
+            return value
+
+    return None
+
+
 def show_main_menu() -> Optional[str]:
     """Show main menu and get selection."""
-    choices = [
-        questionary.Choice("Start Server", value="start"),
-        questionary.Choice("Server Status", value="status"),
-        questionary.Choice("Show QR Code", value="qr"),
-        questionary.Choice("Guest Codes", value="guest"),
-        questionary.Choice("Configuration", value="config"),
-        questionary.Choice("Security Settings", value="security"),
-        questionary.Choice("Setup Wizard", value="setup"),
-        questionary.Separator(),
-        questionary.Choice("Quit", value="quit"),
+    options = [
+        ("1", "start", "Start Server"),
+        ("2", "status", "Server Status"),
+        ("3", "qr", "Show QR Code"),
+        ("4", "guest", "Guest Codes"),
+        ("5", "config", "Configuration"),
+        ("6", "security", "Security Settings"),
+        ("7", "setup", "Setup Wizard"),
+        ("q", "quit", "Quit"),
     ]
 
-    result = questionary.select(
-        "What would you like to do?",
-        choices=choices,
-        style=custom_style,
-        qmark="",
-        pointer="",
-        use_shortcuts=True,
-        use_arrow_keys=True,
-    ).ask()
-
+    result = show_menu("Main Menu", options)
     return None if result == "quit" else result
 
 
@@ -90,52 +105,37 @@ def show_connection_menu() -> Optional[str]:
 
     tailscale_ip = config.get_tailscale_ip()
 
-    choices = [
-        questionary.Choice("Direct LAN - Local network connection", value="direct"),
+    options = [
+        ("1", "direct", "Direct LAN - Local network connection"),
     ]
 
     if tailscale_ip:
-        choices.append(questionary.Choice(f"Tailscale ({tailscale_ip}) - Secure mesh VPN", value="tailscale"))
+        options.append(("2", "tailscale", f"Tailscale ({tailscale_ip}) - Secure mesh VPN"))
     else:
-        choices.append(questionary.Choice("Tailscale - Not detected", value="tailscale", disabled="not available"))
+        options.append(("2", "tailscale_disabled", "Tailscale - [dim]Not detected[/]"))
 
-    choices.extend([
-        questionary.Choice("SSH Tunnel - Localhost only, most secure", value="ssh"),
-        questionary.Separator(),
-        questionary.Choice("Back", value="back"),
-    ])
+    options.append(("3", "ssh", "SSH Tunnel - Localhost only, most secure"))
 
-    result = questionary.select(
-        "Connection mode:",
-        choices=choices,
-        style=custom_style,
-        qmark="",
-        pointer="",
-    ).ask()
+    result = show_menu("Connection Mode", options, back_option=True)
 
-    return None if result == "back" else result
+    if result == "tailscale_disabled":
+        console.print("\n[yellow]Tailscale not detected. Install from tailscale.com[/]")
+        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        return None
+
+    return result
 
 
 def show_guest_menu() -> Optional[str]:
     """Show guest code management menu."""
-    choices = [
-        questionary.Choice("Create New Code", value="guest_create"),
-        questionary.Choice("List All Codes", value="guest_list"),
-        questionary.Choice("Revoke a Code", value="guest_revoke"),
-        questionary.Choice("Show QR for Code", value="guest_qr"),
-        questionary.Separator(),
-        questionary.Choice("Back", value="back"),
+    options = [
+        ("1", "guest_create", "Create New Code"),
+        ("2", "guest_list", "List All Codes"),
+        ("3", "guest_revoke", "Revoke a Code"),
+        ("4", "guest_qr", "Show QR for Code"),
     ]
 
-    result = questionary.select(
-        "Guest access:",
-        choices=choices,
-        style=custom_style,
-        qmark="",
-        pointer="",
-    ).ask()
-
-    return None if result == "back" else result
+    return show_menu("Guest Access", options, back_option=True)
 
 
 def show_security_menu() -> Optional[str]:
@@ -153,28 +153,17 @@ def show_security_menu() -> Optional[str]:
 
     console.print(f"  TLS: {tls}  |  mTLS: {mtls}  |  Device Lock: {device_lock}")
     console.print(f"  Bound Device: {bound}")
-    console.print()
 
-    choices = [
-        questionary.Choice(f"Toggle TLS (currently {'ON' if config.tls_enabled else 'OFF'})", value="security_tls"),
-        questionary.Choice(f"Toggle mTLS (currently {'ON' if config.mtls_enabled else 'OFF'})", value="security_mtls"),
-        questionary.Choice(f"Toggle Device Lock (currently {'ON' if config.device_lock else 'OFF'})", value="security_device_lock"),
-        questionary.Choice("Reset Auth Token", value="security_reset_token"),
-        questionary.Choice("View Blocked IPs", value="security_blocked"),
-        questionary.Choice("Unbind Device", value="security_unbind"),
-        questionary.Separator(),
-        questionary.Choice("Back", value="back"),
+    options = [
+        ("1", "security_tls", f"Toggle TLS (currently {'ON' if config.tls_enabled else 'OFF'})"),
+        ("2", "security_mtls", f"Toggle mTLS (currently {'ON' if config.mtls_enabled else 'OFF'})"),
+        ("3", "security_device_lock", f"Toggle Device Lock (currently {'ON' if config.device_lock else 'OFF'})"),
+        ("4", "security_reset_token", "Reset Auth Token"),
+        ("5", "security_blocked", "View Blocked IPs"),
+        ("6", "security_unbind", "Unbind Device"),
     ]
 
-    result = questionary.select(
-        "Security settings:",
-        choices=choices,
-        style=custom_style,
-        qmark="",
-        pointer="",
-    ).ask()
-
-    return None if result == "back" else result
+    return show_menu("Security Settings", options, back_option=True)
 
 
 def execute_action(action: str) -> bool:
@@ -209,10 +198,7 @@ def execute_action(action: str) -> bool:
             pass
 
         console.print()
-        questionary.press_any_key_to_continue(
-            message="Press any key to continue...",
-            style=custom_style,
-        ).ask()
+        Prompt.ask("[dim]Press Enter to continue[/]")
         return True
 
     elif action == "qr":
@@ -222,10 +208,7 @@ def execute_action(action: str) -> bool:
         console.print()
         print_server_info(config, console)
         console.print()
-        questionary.press_any_key_to_continue(
-            message="Press any key to continue...",
-            style=custom_style,
-        ).ask()
+        Prompt.ask("[dim]Press Enter to continue[/]")
         return True
 
     elif action == "config":
@@ -242,27 +225,10 @@ def execute_action(action: str) -> bool:
         console.print(f"  Max Sessions/IP: [white]{config.max_sessions_per_ip}[/]")
         console.print()
 
-        if questionary.confirm("Edit configuration?", default=False, style=custom_style, qmark="").ask():
-            new_port = questionary.text(
-                "Port:",
-                default=str(config.port),
-                style=custom_style,
-                qmark="",
-            ).ask()
-
-            new_dir = questionary.path(
-                "Working directory:",
-                default=str(config.working_dir),
-                style=custom_style,
-                qmark="",
-            ).ask()
-
-            new_name = questionary.text(
-                "Server name:",
-                default=config.server_name,
-                style=custom_style,
-                qmark="",
-            ).ask()
+        if Confirm.ask("Edit configuration?", default=False):
+            new_port = Prompt.ask("Port", default=str(config.port))
+            new_dir = Prompt.ask("Working directory", default=str(config.working_dir))
+            new_name = Prompt.ask("Server name", default=config.server_name)
 
             if new_port and new_dir and new_name:
                 from pathlib import Path
@@ -274,10 +240,7 @@ def execute_action(action: str) -> bool:
                 fancy_progress("Saving configuration...", 5)
                 console.print("\n[green]Configuration saved![/]")
 
-        questionary.press_any_key_to_continue(
-            message="Press any key to continue...",
-            style=custom_style,
-        ).ask()
+        Prompt.ask("[dim]Press Enter to continue[/]")
         return True
 
     elif action == "guest_create":
@@ -285,35 +248,13 @@ def execute_action(action: str) -> bool:
         console.print("[bold green]Create Guest Code[/]")
         console.print()
 
-        name = questionary.text(
-            "Friend's name:",
-            style=custom_style,
-            qmark="",
-        ).ask()
-
+        name = Prompt.ask("Friend's name")
         if not name:
             return True
 
-        expires = questionary.text(
-            "Expires in hours (0=never):",
-            default="24",
-            style=custom_style,
-            qmark="",
-        ).ask()
-
-        max_uses = questionary.text(
-            "Max uses (empty=unlimited):",
-            default="",
-            style=custom_style,
-            qmark="",
-        ).ask()
-
-        read_only = questionary.confirm(
-            "Read-only access?",
-            default=False,
-            style=custom_style,
-            qmark="",
-        ).ask()
+        expires = Prompt.ask("Expires in hours (0=never)", default="24")
+        max_uses = Prompt.ask("Max uses (empty=unlimited)", default="")
+        read_only = Confirm.ask("Read-only access?", default=False)
 
         fancy_progress("Creating guest code...", 8)
 
@@ -329,10 +270,7 @@ def execute_action(action: str) -> bool:
         )
 
         console.print(f"\n[green]Created![/] Code: [bold white]{result['code']}[/]")
-        questionary.press_any_key_to_continue(
-            message="Press any key to continue...",
-            style=custom_style,
-        ).ask()
+        Prompt.ask("[dim]Press Enter to continue[/]")
         return True
 
     elif action == "guest_list":
@@ -360,19 +298,11 @@ def execute_action(action: str) -> bool:
                 console.print(f"  [bold cyan]{code['code']}[/] - {code['name']} ({status})")
 
         console.print()
-        questionary.press_any_key_to_continue(
-            message="Press any key to continue...",
-            style=custom_style,
-        ).ask()
+        Prompt.ask("[dim]Press Enter to continue[/]")
         return True
 
     elif action == "guest_revoke":
-        code = questionary.text(
-            "Code to revoke:",
-            style=custom_style,
-            qmark="",
-        ).ask()
-
+        code = Prompt.ask("[cyan]Code to revoke[/]")
         if not code:
             return True
 
@@ -387,19 +317,11 @@ def execute_action(action: str) -> bool:
         else:
             console.print(f"\n[red]Not found:[/] {code}")
 
-        questionary.press_any_key_to_continue(
-            message="Press any key to continue...",
-            style=custom_style,
-        ).ask()
+        Prompt.ask("[dim]Press Enter to continue[/]")
         return True
 
     elif action == "guest_qr":
-        code = questionary.text(
-            "Code for QR:",
-            style=custom_style,
-            qmark="",
-        ).ask()
-
+        code = Prompt.ask("[cyan]Code for QR[/]")
         if not code:
             return True
 
@@ -413,10 +335,7 @@ def execute_action(action: str) -> bool:
         if result.output:
             console.print(result.output)
 
-        questionary.press_any_key_to_continue(
-            message="Press any key to continue...",
-            style=custom_style,
-        ).ask()
+        Prompt.ask("[dim]Press Enter to continue[/]")
         return True
 
     elif action == "security_tls":
@@ -431,10 +350,7 @@ def execute_action(action: str) -> bool:
         else:
             console.print("\n[yellow]TLS disabled - Server will use ws://[/]")
 
-        questionary.press_any_key_to_continue(
-            message="Press any key to continue...",
-            style=custom_style,
-        ).ask()
+        Prompt.ask("[dim]Press Enter to continue[/]")
         return True
 
     elif action == "security_mtls":
@@ -451,10 +367,7 @@ def execute_action(action: str) -> bool:
         else:
             console.print("\n[dim]mTLS disabled[/]")
 
-        questionary.press_any_key_to_continue(
-            message="Press any key to continue...",
-            style=custom_style,
-        ).ask()
+        Prompt.ask("[dim]Press Enter to continue[/]")
         return True
 
     elif action == "security_device_lock":
@@ -469,19 +382,11 @@ def execute_action(action: str) -> bool:
         else:
             console.print("\n[yellow]Device lock disabled[/]")
 
-        questionary.press_any_key_to_continue(
-            message="Press any key to continue...",
-            style=custom_style,
-        ).ask()
+        Prompt.ask("[dim]Press Enter to continue[/]")
         return True
 
     elif action == "security_reset_token":
-        if questionary.confirm(
-            "Generate new auth token? Current connections will be invalidated.",
-            default=False,
-            style=custom_style,
-            qmark="",
-        ).ask():
+        if Confirm.ask("Generate new auth token? Current connections will be invalidated.", default=False):
             import secrets
             config = ServerConfig.load()
             config.token = secrets.token_urlsafe(24)
@@ -490,10 +395,7 @@ def execute_action(action: str) -> bool:
             fancy_progress("Generating new token...", 8)
             console.print(f"\n[green]New token:[/] {config.token}")
 
-        questionary.press_any_key_to_continue(
-            message="Press any key to continue...",
-            style=custom_style,
-        ).ask()
+        Prompt.ask("[dim]Press Enter to continue[/]")
         return True
 
     elif action == "security_blocked":
@@ -517,10 +419,7 @@ def execute_action(action: str) -> bool:
                 for b in blocked:
                     console.print(f"  {b['identifier'][:20]} ({b['identifier_type']})")
 
-        questionary.press_any_key_to_continue(
-            message="Press any key to continue...",
-            style=custom_style,
-        ).ask()
+        Prompt.ask("[dim]Press Enter to continue[/]")
         return True
 
     elif action == "security_unbind":
@@ -528,16 +427,13 @@ def execute_action(action: str) -> bool:
 
         if not config.bound_device_id:
             console.print("\n[yellow]No device is currently bound.[/]")
-        elif questionary.confirm("Unbind current device?", default=False, style=custom_style, qmark="").ask():
+        elif Confirm.ask("Unbind current device?", default=False):
             config.bound_device_id = None
             config.save()
             fancy_progress("Unbinding device...", 5)
             console.print("[green]Device unbound.[/]")
 
-        questionary.press_any_key_to_continue(
-            message="Press any key to continue...",
-            style=custom_style,
-        ).ask()
+        Prompt.ask("[dim]Press Enter to continue[/]")
         return True
 
     return True

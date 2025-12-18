@@ -59,6 +59,12 @@ class ServerConfig(BaseSettings):
     token_rotation_days: int = Field(default=30, description="Days before token auto-rotation (0=disabled)")
     token_grace_hours: int = Field(default=24, description="Hours old tokens remain valid after rotation")
 
+    # Claude permission settings
+    permission_mode: str = Field(
+        default="acceptEdits",
+        description="Claude permission mode: default, acceptEdits, or bypassPermissions"
+    )
+
     @property
     def bind_host(self) -> str:
         """Get the actual bind address based on security settings."""
