@@ -927,6 +927,94 @@ class DarkCodeServer:
                         "status": "processing",
                     }))
 
+        elif msg_type == "send_message_with_files":
+            # Handle message with file attachments
+            text = msg.get("text", "")
+            files = msg.get("files", [])
+
+            # Validate
+            if not isinstance(text, str):
+                text = ""
+            if not isinstance(files, list):
+                files = []
+
+            # Process files - save them and build context
+            file_descriptions = []
+            saved_files = []
+
+            for file_info in files[:5]:  # Max 5 files
+                try:
+                    name = file_info.get("name", "file")
+                    content = file_info.get("content", "")
+                    is_base64 = file_info.get("isBase64", False)
+                    mime_type = file_info.get("mimeType", "application/octet-stream")
+
+                    # Sanitize filename
+                    safe_name = "".join(c for c in name if c.isalnum() or c in "._-")[:100]
+                    if not safe_name:
+                        safe_name = "uploaded_file"
+
+                    # Save to uploads subdirectory
+                    uploads_dir = session.working_dir / ".darkcode_uploads"
+                    uploads_dir.mkdir(exist_ok=True)
+
+                    file_path = uploads_dir / safe_name
+
+                    # Handle base64 vs text content
+                    if is_base64:
+                        import base64
+                        try:
+                            decoded = base64.b64decode(content)
+                            file_path.write_bytes(decoded)
+                        except Exception:
+                            continue
+                    else:
+                        file_path.write_text(content, encoding="utf-8")
+
+                    saved_files.append(str(file_path))
+
+                    # Build description for Claude
+                    if mime_type.startswith("image/"):
+                        file_descriptions.append(f"[Image attached: {safe_name} at {file_path}]")
+                    elif mime_type.startswith("text/") or not is_base64:
+                        # Include text content directly for Claude to see
+                        preview = content[:2000] if len(content) > 2000 else content
+                        file_descriptions.append(f"[File: {safe_name}]\n```\n{preview}\n```")
+                    else:
+                        file_descriptions.append(f"[Binary file attached: {safe_name} at {file_path}]")
+
+                except Exception as e:
+                    logger.warning(f"Failed to process file: {e}")
+                    continue
+
+            # Build the full message
+            full_message = text
+            if file_descriptions:
+                files_context = "\n\n".join(file_descriptions)
+                if text:
+                    full_message = f"{text}\n\n--- Attached Files ---\n{files_context}"
+                else:
+                    full_message = f"--- Attached Files ---\n{files_context}"
+
+            if full_message:
+                if await self._write_to_process(session, full_message):
+                    session.is_processing = True
+                    session.last_active = time.time()
+                    session.message_count += 1
+
+                    # Save to chat history
+                    if session.chat_session_id:
+                        self._chat_history.save_message(session.chat_session_id, {
+                            "role": "user",
+                            "content": text if text else "(files attached)",
+                            "files": saved_files,
+                        })
+
+                    await session.websocket.send(json.dumps({
+                        "type": "status",
+                        "status": "processing",
+                    }))
+
         elif msg_type == "abort":
             if session.process and self._is_process_alive(session):
                 try:
