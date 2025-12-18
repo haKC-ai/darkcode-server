@@ -35,6 +35,80 @@ class ServerState(Enum):
     LOCKED = "locked"        # Bound to device, rejecting others
 
 
+class ChatHistory:
+    """Persistent chat history storage."""
+
+    def __init__(self, sessions_dir: Path):
+        self.sessions_dir = sessions_dir
+        self.sessions_dir.mkdir(parents=True, exist_ok=True)
+
+    def _get_session_file(self, session_id: str) -> Path:
+        """Get the file path for a session's chat history."""
+        # Use a hash of the session_id for the filename
+        safe_name = hashlib.sha256(session_id.encode()).hexdigest()[:16]
+        return self.sessions_dir / f"{safe_name}.json"
+
+    def load(self, session_id: str) -> list[dict]:
+        """Load chat history for a session."""
+        file_path = self._get_session_file(session_id)
+        if file_path.exists():
+            try:
+                with open(file_path, "r") as f:
+                    data = json.load(f)
+                    return data.get("messages", [])
+            except (json.JSONDecodeError, IOError):
+                return []
+        return []
+
+    def save_message(self, session_id: str, message: dict):
+        """Append a message to the chat history."""
+        file_path = self._get_session_file(session_id)
+
+        # Load existing messages
+        messages = self.load(session_id)
+        messages.append({
+            **message,
+            "timestamp": time.time()
+        })
+
+        # Keep only last 1000 messages per session
+        if len(messages) > 1000:
+            messages = messages[-1000:]
+
+        # Save
+        try:
+            with open(file_path, "w") as f:
+                json.dump({"session_id": session_id, "messages": messages}, f)
+        except IOError:
+            pass  # Ignore save errors
+
+    def list_sessions(self) -> list[dict]:
+        """List all saved sessions with metadata."""
+        sessions = []
+        for file_path in self.sessions_dir.glob("*.json"):
+            try:
+                with open(file_path, "r") as f:
+                    data = json.load(f)
+                    session_id = data.get("session_id", "")
+                    messages = data.get("messages", [])
+                    if messages:
+                        last_msg = messages[-1]
+                        sessions.append({
+                            "session_id": session_id,
+                            "message_count": len(messages),
+                            "last_active": last_msg.get("timestamp", 0),
+                            "preview": last_msg.get("content", "")[:100] if "content" in last_msg else ""
+                        })
+            except (json.JSONDecodeError, IOError):
+                continue
+        return sorted(sessions, key=lambda x: x.get("last_active", 0), reverse=True)
+
+    def delete(self, session_id: str):
+        """Delete a session's chat history."""
+        file_path = self._get_session_file(session_id)
+        file_path.unlink(missing_ok=True)
+
+
 @dataclass
 class Session:
     """A Claude Code session."""
@@ -55,6 +129,8 @@ class Session:
     guest_code: str = ""
     guest_name: str = ""
     permission_level: str = "full"  # "full" or "read_only"
+    # Chat history
+    chat_session_id: str = ""  # Persistent chat session ID for resuming
 
     def __post_init__(self):
         self.working_dir = Path(self.working_dir)
@@ -96,6 +172,11 @@ class DarkCodeServer:
         # Guest access manager (always available)
         self._guest_manager = GuestAccessManager(
             db_path=self.config.config_dir / "guests.db"
+        )
+
+        # Chat history persistence
+        self._chat_history = ChatHistory(
+            sessions_dir=self.config.config_dir / "chat_sessions"
         )
 
         # Device binding state
@@ -598,12 +679,20 @@ class DarkCodeServer:
         msg_type = msg.get("type", "")
 
         if msg_type == "assistant":
+            content = msg.get("message", {}).get("content") or msg.get("content")
             await session.websocket.send(json.dumps({
                 "type": "claude_message",
                 "role": "assistant",
-                "content": msg.get("message", {}).get("content") or msg.get("content"),
+                "content": content,
                 "timestamp": int(time.time() * 1000),
             }))
+
+            # Save assistant message to chat history
+            if session.chat_session_id and content:
+                self._chat_history.save_message(session.chat_session_id, {
+                    "role": "assistant",
+                    "content": content,
+                })
 
         elif msg_type == "tool_use":
             await session.websocket.send(json.dumps({
@@ -715,6 +804,14 @@ class DarkCodeServer:
                     session.is_processing = True
                     session.last_active = time.time()
                     session.message_count += 1
+
+                    # Save user message to chat history
+                    if session.chat_session_id:
+                        self._chat_history.save_message(session.chat_session_id, {
+                            "role": "user",
+                            "content": text,
+                        })
+
                     await session.websocket.send(json.dumps({
                         "type": "status",
                         "status": "processing",
@@ -742,11 +839,62 @@ class DarkCodeServer:
             await session.websocket.send(json.dumps({
                 "type": "session_info",
                 "sessionId": session.id,
+                "chatSessionId": session.chat_session_id,
                 "workingDir": str(session.working_dir),
                 "isProcessing": session.is_processing,
                 "messageCount": session.message_count,
                 "processAlive": self._is_process_alive(session),
             }))
+
+        elif msg_type == "set_chat_session":
+            # Set or create a chat session ID for persistence
+            chat_session_id = msg.get("chatSessionId", "")
+            if chat_session_id:
+                session.chat_session_id = chat_session_id
+            else:
+                # Generate a new one based on working dir and time
+                session.chat_session_id = hashlib.sha256(
+                    f"{session.working_dir}-{time.time()}".encode()
+                ).hexdigest()[:16]
+
+            await session.websocket.send(json.dumps({
+                "type": "chat_session_set",
+                "chatSessionId": session.chat_session_id,
+            }))
+
+        elif msg_type == "get_chat_history":
+            # Return chat history for a session
+            chat_session_id = msg.get("chatSessionId", session.chat_session_id)
+            if chat_session_id:
+                messages = self._chat_history.load(chat_session_id)
+                await session.websocket.send(json.dumps({
+                    "type": "chat_history",
+                    "chatSessionId": chat_session_id,
+                    "messages": messages,
+                }))
+            else:
+                await session.websocket.send(json.dumps({
+                    "type": "chat_history",
+                    "messages": [],
+                }))
+
+        elif msg_type == "list_chat_sessions":
+            # List all saved chat sessions
+            sessions = self._chat_history.list_sessions()
+            await session.websocket.send(json.dumps({
+                "type": "chat_sessions_list",
+                "sessions": sessions,
+            }))
+
+        elif msg_type == "delete_chat_session":
+            # Delete a chat session
+            chat_session_id = msg.get("chatSessionId", "")
+            if chat_session_id:
+                self._chat_history.delete(chat_session_id)
+                await session.websocket.send(json.dumps({
+                    "type": "chat_session_deleted",
+                    "chatSessionId": chat_session_id,
+                }))
 
     async def _destroy_session(self, session: Session):
         """Cleanup a session."""
