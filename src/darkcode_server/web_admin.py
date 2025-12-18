@@ -555,7 +555,7 @@ class WebAdminHandler:
                         302,
                         {
                             'Location': '/admin',
-                            'Set-Cookie': f'darkcode_admin_session={session_cookie}; HttpOnly; SameSite=Strict; Path=/admin'
+                            'Set-Cookie': f'darkcode_admin_session={session_cookie}; HttpOnly; SameSite=Lax; Path=/'
                         },
                         b''
                     )
@@ -573,7 +573,7 @@ class WebAdminHandler:
                 302,
                 {
                     'Location': '/admin',
-                    'Set-Cookie': 'darkcode_admin_session=; HttpOnly; SameSite=Strict; Path=/admin; Max-Age=0'
+                    'Set-Cookie': 'darkcode_admin_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'
                 },
                 b''
             )
