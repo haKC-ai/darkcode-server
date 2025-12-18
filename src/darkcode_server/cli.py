@@ -604,11 +604,29 @@ def menu_uninstall():
 # Click CLI commands
 @click.group(invoke_without_command=True)
 @click.option("--version", "-v", is_flag=True, help="Show version")
+@click.option("--tui", is_flag=True, help="Launch TUI interface with arrow key navigation")
 @click.pass_context
-def main(ctx, version):
+def main(ctx, version, tui):
     """DarkCode Server - Remote Claude Code from your phone."""
     if version:
         console.print(f"darkcode-server v{__version__}")
+        return
+
+    if tui:
+        # Launch the modern TUI
+        from darkcode_server.tui import run_tui
+        result = run_tui()
+        if result:
+            action, mode = result
+            if action == "start":
+                # Start server with selected mode
+                config = ServerConfig.load()
+                if mode == "ssh":
+                    config.local_only = True
+                else:
+                    config.local_only = False
+                # Call the start command logic
+                ctx.invoke(start, local_only=config.local_only)
         return
 
     if ctx.invoked_subcommand is None:
