@@ -57,6 +57,32 @@ def fancy_progress(description: str, steps: int = 10):
             progress.advance(task)
 
 
+def get_random_theme_colors() -> dict:
+    """Get colors from a random hakcer theme."""
+    import random
+    try:
+        from hakcer import THEMES, list_themes
+        theme_names = list_themes()
+        theme_name = random.choice(theme_names)
+        theme = THEMES[theme_name]
+        colors = theme['colors']
+        # Return primary colors for menu styling
+        return {
+            'title': f"#{colors['primary'][0]}",
+            'selected': f"#{colors['primary'][1]}",
+            'option': f"#{colors['accent'][0]}" if colors.get('accent') else '#888888',
+            'hint': '#555555',
+        }
+    except ImportError:
+        # Fallback if hakcer not installed
+        return {
+            'title': '#00D9FF',
+            'selected': '#FF10F0',
+            'option': '#888888',
+            'hint': '#555555',
+        }
+
+
 def prompt_menu(title: str, options: List[Tuple[str, str]], back_option: bool = True) -> Optional[str]:
     """Show a menu using prompt_toolkit with arrow key navigation.
 
@@ -68,14 +94,12 @@ def prompt_menu(title: str, options: List[Tuple[str, str]], back_option: bool = 
     Returns:
         Selected value or None if back/quit
     """
-    from prompt_toolkit import prompt
     from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.keys import Keys
     from prompt_toolkit.application import Application
     from prompt_toolkit.layout import Layout
-    from prompt_toolkit.layout.containers import HSplit, Window
+    from prompt_toolkit.layout.containers import Window
     from prompt_toolkit.layout.controls import FormattedTextControl
-    from prompt_toolkit.formatted_text import HTML
     from prompt_toolkit.styles import Style
 
     if back_option:
@@ -83,6 +107,9 @@ def prompt_menu(title: str, options: List[Tuple[str, str]], back_option: bool = 
 
     selected_index = [0]
     result = [None]
+
+    # Get random theme colors for this menu
+    theme_colors = get_random_theme_colors()
 
     kb = KeyBindings()
 
@@ -127,10 +154,10 @@ def prompt_menu(title: str, options: List[Tuple[str, str]], back_option: bool = 
         return lines
 
     style = Style.from_dict({
-        'title': 'bold cyan',
-        'selected': 'bold #00ff88',
-        'option': '#888888',
-        'hint': 'italic #555555',
+        'title': f"bold {theme_colors['title']}",
+        'selected': f"bold {theme_colors['selected']}",
+        'option': theme_colors['option'],
+        'hint': f"italic {theme_colors['hint']}",
     })
 
     layout = Layout(
