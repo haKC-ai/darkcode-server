@@ -65,6 +65,9 @@ class ServerConfig(BaseSettings):
         description="Claude permission mode: default, acceptEdits, or bypassPermissions"
     )
 
+    # Web admin settings
+    web_admin_disabled: bool = Field(default=False, description="Disable web admin dashboard")
+
     @property
     def bind_host(self) -> str:
         """Get the actual bind address based on security settings."""

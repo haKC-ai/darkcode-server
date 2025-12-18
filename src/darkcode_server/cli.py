@@ -771,8 +771,9 @@ def main(ctx, version, classic):
 @click.option("--name", "-n", envvar="DARKCODE_SERVER_NAME", help="Server display name")
 @click.option("--local-only", "-l", is_flag=True, envvar="DARKCODE_LOCAL_ONLY", help="Only accept localhost connections (use with SSH tunnel)")
 @click.option("--no-banner", is_flag=True, help="Skip banner animation")
+@click.option("--no-web", is_flag=True, envvar="DARKCODE_NO_WEB", help="Disable web admin dashboard")
 @click.option("--save", "-s", is_flag=True, help="Save options to config file")
-def start(port, token, working_dir, name, local_only, no_banner, save):
+def start(port, token, working_dir, name, local_only, no_banner, no_web, save):
     """Start the DarkCode server.
 
     CONNECTION MODES:
@@ -823,6 +824,8 @@ def start(port, token, working_dir, name, local_only, no_banner, save):
         config.server_name = name
     if local_only:
         config.local_only = True
+    if no_web:
+        config.web_admin_disabled = True
 
     # Auto-save on first run or if requested
     if first_run or save:
@@ -881,11 +884,23 @@ def start(port, token, working_dir, name, local_only, no_banner, save):
 
     console.print(f"\n[green]Server listening on {config.bind_host}:{config.port}[/]")
 
-    # Show admin URL
-    local_ips = config.get_local_ips()
-    local_ip = local_ips[0]["address"] if local_ips else "127.0.0.1"
-    protocol = "https" if config.tls_enabled else "http"
-    console.print(f"[cyan]Web Admin:[/] {protocol}://{local_ip}:{config.port}/admin")
+    # Show admin URL and PIN (unless disabled)
+    if not config.web_admin_disabled:
+        local_ips = config.get_local_ips()
+        local_ip = local_ips[0]["address"] if local_ips else "127.0.0.1"
+        protocol = "https" if config.tls_enabled else "http"
+        console.print(f"[cyan]Web Admin:[/] {protocol}://{local_ip}:{config.port}/admin")
+
+        # Get and display web PIN
+        try:
+            from darkcode_server.web_admin import WebAdminHandler
+            web_pin = WebAdminHandler.get_web_pin()
+            console.print(f"[cyan]Web PIN:[/] [bold yellow]{web_pin}[/]")
+        except ImportError:
+            pass
+    else:
+        console.print("[dim]Web Admin: disabled (--no-web)[/]")
+
     console.print("[dim]Press Ctrl+C to stop[/]\n")
 
     server = DarkCodeServer(config)

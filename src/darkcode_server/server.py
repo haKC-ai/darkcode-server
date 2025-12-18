@@ -17,9 +17,10 @@ from websockets.server import WebSocketServerProtocol
 from websockets.http import Headers
 from websockets.http11 import Response
 
-# Suppress noisy websockets handshake errors (TLS mismatch, etc.)
-logging.getLogger("websockets.server").setLevel(logging.ERROR)
-logging.getLogger("websockets.protocol").setLevel(logging.ERROR)
+# Suppress noisy websockets handshake errors (TLS mismatch, InvalidUpgrade, etc.)
+logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
+logging.getLogger("websockets.protocol").setLevel(logging.CRITICAL)
+logging.getLogger("websockets").setLevel(logging.CRITICAL)
 
 from darkcode_server.config import ServerConfig
 from darkcode_server.security import (
@@ -297,6 +298,22 @@ class DarkCodeServer:
             path = str(connection) if isinstance(connection, str) else getattr(connection, 'path', '/')
             request_headers = request if hasattr(request, 'get') else {}
 
+        # Serve favicon.ico
+        if isinstance(path, str) and path == '/favicon.ico':
+            try:
+                from darkcode_server.web_admin import serve_favicon
+                status, resp_headers, resp_body = serve_favicon()
+                header_list = [(k, v) for k, v in resp_headers.items()]
+                return Response(status, "OK", Headers(header_list), resp_body)
+            except ImportError:
+                return Response(404, "Not Found", Headers([]), b"")
+
+        # Check if web admin is disabled
+        if getattr(self.config, 'web_admin_disabled', False):
+            # Return None to let websockets handle it normally
+            # This may result in 426 for non-WS requests, which is fine
+            return None
+
         # Handle admin dashboard requests (non-WebSocket HTTP)
         if isinstance(path, str) and path.startswith('/admin'):
             # Initialize web admin handler if needed
@@ -340,6 +357,32 @@ class DarkCodeServer:
             response_headers = Headers(header_list)
 
             return Response(status, reason, response_headers, resp_body)
+
+        # Check if this is a WebSocket upgrade request
+        # If not, return a friendly HTTP response instead of letting websockets raise InvalidUpgrade
+        connection_header = request_headers.get('Connection', '').lower() if hasattr(request_headers, 'get') else ''
+        upgrade_header = request_headers.get('Upgrade', '').lower() if hasattr(request_headers, 'get') else ''
+
+        if 'upgrade' not in connection_header or upgrade_header != 'websocket':
+            # Non-WebSocket HTTP request - return a simple response
+            # This prevents InvalidUpgrade errors from browser auto-refresh, health checks, etc.
+            html = b"""<!DOCTYPE html>
+<html><head><title>DarkCode Server</title></head>
+<body style="font-family: system-ui; background: #1a1a2e; color: #eee; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;">
+<div style="text-align: center;">
+<h1 style="color: #00d4ff;">DarkCode Server</h1>
+<p>WebSocket server running. Use the DarkCode app to connect.</p>
+<p><a href="/admin" style="color: #00d4ff;">Web Admin Dashboard</a></p>
+</div></body></html>"""
+            return Response(
+                200, "OK",
+                Headers([
+                    ("Content-Type", "text/html; charset=utf-8"),
+                    ("Content-Length", str(len(html))),
+                    ("Cache-Control", "no-cache"),
+                ]),
+                html
+            )
 
         # For WebSocket paths, return None to continue with upgrade
         return None
