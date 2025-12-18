@@ -557,25 +557,55 @@ class WebAdminHandler:
                     WebAdminHandler._authenticated_sessions.add(session_cookie)
                     logging.info(f"Login successful, setting cookie: {session_cookie[:8]}...")
                     # Return HTML page that sets cookie via JS then redirects
-                    # This works around websockets library issues with Set-Cookie on 302
+                    # Uses multiple methods to ensure cookie is set before redirect
                     redirect_html = f'''<!DOCTYPE html>
 <html>
-<head><title>Redirecting...</title></head>
+<head>
+    <title>Redirecting...</title>
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+</head>
 <body style="background:#0a0a0f;color:#e0e0e0;font-family:monospace;display:flex;justify-content:center;align-items:center;height:100vh;">
 <div style="text-align:center;">
-<p>Logging in...</p>
+<p id="status">Setting session...</p>
 </div>
 <script>
-document.cookie = "darkcode_admin_session={session_cookie}; path=/; max-age=86400; samesite=lax";
-window.location.href = "/admin";
+try {{
+    // Set the cookie
+    var cookieStr = "darkcode_admin_session={session_cookie}; path=/; max-age=86400; SameSite=Lax";
+    document.cookie = cookieStr;
+    console.log("Cookie set:", cookieStr);
+    console.log("All cookies:", document.cookie);
+
+    // Verify cookie was set
+    if (document.cookie.indexOf("darkcode_admin_session") === -1) {{
+        document.getElementById("status").innerText = "Error: Cookie could not be set. Check browser settings.";
+        console.error("Cookie was not set!");
+    }} else {{
+        document.getElementById("status").innerText = "Success! Redirecting...";
+        // Use replace to avoid back-button issues
+        setTimeout(function() {{
+            window.location.replace("/admin");
+        }}, 100);
+    }}
+}} catch(e) {{
+    document.getElementById("status").innerText = "Error: " + e.message;
+    console.error("Cookie error:", e);
+}}
 </script>
+<noscript>
+    <p>JavaScript is required. Please enable JavaScript and refresh.</p>
+</noscript>
 </body>
 </html>'''
                     return (
                         200,
                         {
                             'Content-Type': 'text/html; charset=utf-8',
-                            'Cache-Control': 'no-store'
+                            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+                            'Pragma': 'no-cache',
+                            'Expires': '0'
                         },
                         redirect_html.encode('utf-8')
                     )
@@ -622,7 +652,11 @@ window.location.href = "/admin";
         error_html = f'<div class="error">{html.escape(error)}</div>' if error else ''
         content = LOGIN_CONTENT.format(error=error_html, ascii_logo=html.escape(ASCII_LOGO))
         page = ADMIN_HTML.format(content=content)
-        return (200, {'Content-Type': 'text/html'}, page.encode('utf-8'))
+        return (200, {
+            'Content-Type': 'text/html',
+            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+            'Pragma': 'no-cache'
+        }, page.encode('utf-8'))
 
     def _dashboard_page(self) -> tuple:
         """Render the main dashboard."""
