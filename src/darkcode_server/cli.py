@@ -647,7 +647,7 @@ def prompt_install_tailscale():
 # Click CLI commands
 @click.group(invoke_without_command=True)
 @click.option("--version", "-v", is_flag=True, help="Show version")
-@click.option("--classic", is_flag=True, help="Use classic menu instead of TUI")
+@click.option("--classic", is_flag=True, help="Use classic text menu instead of interactive dialogs")
 @click.pass_context
 def main(ctx, version, classic):
     """DarkCode Server - Remote Claude Code from your phone."""
@@ -656,14 +656,16 @@ def main(ctx, version, classic):
         return
 
     if ctx.invoked_subcommand is None:
+        show_banner()
+
         if classic:
             # Use old menu if explicitly requested
             interactive_menu()
         else:
-            # Default to modern TUI with arrow key navigation
+            # Default to modern prompt_toolkit dialogs with dropdowns
             try:
-                from darkcode_server.tui import run_tui
-                result = run_tui()
+                from darkcode_server.prompt_ui import run_interactive_menu
+                result = run_interactive_menu()
                 if result:
                     action, mode = result
                     if action == "start":
@@ -681,6 +683,33 @@ def main(ctx, version, classic):
                         menu_qr_code()
                     elif action == "guest":
                         menu_guest_codes()
+                    elif action == "guest_create":
+                        from darkcode_server.prompt_ui import show_guest_create_dialog
+                        guest_data = show_guest_create_dialog()
+                        if guest_data:
+                            from darkcode_server.security import GuestAccessManager
+                            config = ServerConfig.load()
+                            guest_mgr = GuestAccessManager(config.config_dir / "guests.db")
+                            result = guest_mgr.create_guest_code(**guest_data)
+                            console.print(f"\n[green]Guest code created:[/] [bold]{result['code']}[/]")
+                            Prompt.ask("\n[dim]Press Enter to continue[/]")
+                    elif action == "guest_list":
+                        from click.testing import CliRunner
+                        runner = CliRunner()
+                        runner.invoke(guest_list, [], standalone_mode=False)
+                        Prompt.ask("\n[dim]Press Enter to continue[/]")
+                    elif action == "guest_revoke":
+                        code = Prompt.ask("[cyan]Code to revoke[/]")
+                        from click.testing import CliRunner
+                        runner = CliRunner()
+                        runner.invoke(guest_revoke, [code], standalone_mode=False)
+                        Prompt.ask("\n[dim]Press Enter to continue[/]")
+                    elif action == "guest_qr":
+                        code = Prompt.ask("[cyan]Code for QR[/]")
+                        from click.testing import CliRunner
+                        runner = CliRunner()
+                        runner.invoke(guest_qr, [code], standalone_mode=False)
+                        Prompt.ask("\n[dim]Press Enter to continue[/]")
                     elif action == "config":
                         menu_config()
                     elif action == "security":
@@ -690,11 +719,11 @@ def main(ctx, version, classic):
                     elif action == "install_tailscale":
                         prompt_install_tailscale()
             except ImportError as e:
-                console.print(f"[yellow]TUI requires pyTermTk. Falling back to classic menu.[/]")
-                console.print(f"[dim]Install with: pip install pyTermTk[/]")
+                console.print(f"[yellow]Interactive dialogs require prompt_toolkit. Falling back to classic menu.[/]")
+                console.print(f"[dim]Install with: pip install prompt_toolkit[/]")
                 interactive_menu()
             except Exception as e:
-                console.print(f"[yellow]TUI error: {e}. Falling back to classic menu.[/]")
+                console.print(f"[yellow]Dialog error: {e}. Falling back to classic menu.[/]")
                 interactive_menu()
 
 
