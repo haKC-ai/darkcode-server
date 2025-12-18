@@ -1,22 +1,51 @@
-"""TUI interface for DarkCode Server using Textual."""
+"""TUI interface for DarkCode Server using pyTermTk."""
 
-import asyncio
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
 
-from rich.text import Text
-from textual import on
-from textual.app import App, ComposeResult
-from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
-from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Label, ListItem, ListView, Static
+import TermTk as ttk
 
 from darkcode_server import __version__
 from darkcode_server.config import ServerConfig
+
+
+def show_banner():
+    """Show the DarkCode banner using hakcer."""
+    try:
+        from hakcer import show_banner as hakcer_banner, set_theme
+
+        set_theme("synthwave")
+
+        # Try custom banner file locations
+        banner_paths = [
+            Path("/Users/0xdeadbeef/Desktop/darkcode.txt"),  # Primary custom
+            Path.home() / ".darkcode" / "banner.txt",
+            Path(__file__).parent / "assets" / "banner.txt",
+        ]
+
+        banner_file = next((p for p in banner_paths if p.exists()), None)
+
+        if banner_file:
+            hakcer_banner(
+                custom_file=str(banner_file),
+                effect_name="rain",
+                hold_time=2.0,
+            )
+        else:
+            # Fallback to text
+            hakcer_banner(
+                text="DARKCODE",
+                effect_name="glitch",
+                hold_time=1.0,
+            )
+        return True
+    except ImportError:
+        return False
+    except Exception:
+        return False
 
 
 class SystemCheck:
@@ -37,10 +66,10 @@ class SystemCheck:
                 )
                 if result.returncode == 0:
                     version = result.stdout.strip().split()[-1] if result.stdout else "unknown"
-                    return True, f"Claude Code v{version}"
+                    return True, f"v{version}"
             except Exception:
                 pass
-        return False, "Not installed - Run: npm install -g @anthropic-ai/claude-code"
+        return False, "Not installed"
 
     def check_tailscale(self) -> tuple[bool, str]:
         """Check if Tailscale is available and connected."""
@@ -58,441 +87,271 @@ class SystemCheck:
                     if data.get("Self", {}).get("Online"):
                         ip = data.get("TailscaleIPs", [""])[0]
                         return True, f"Connected ({ip})"
-                    return False, "Installed but not connected - Run: tailscale up"
+                    return False, "Not connected"
             except Exception:
                 pass
-            return False, "Installed but not running"
-        return False, "Not installed - https://tailscale.com/download"
+            return False, "Not running"
+        return False, "Not installed"
 
     def check_python_version(self) -> tuple[bool, str]:
         """Check Python version."""
         version = sys.version_info
         if version >= (3, 9):
-            return True, f"Python {version.major}.{version.minor}.{version.micro}"
-        return False, f"Python {version.major}.{version.minor} (need 3.9+)"
+            return True, f"{version.major}.{version.minor}.{version.micro}"
+        return False, f"{version.major}.{version.minor} (need 3.9+)"
 
     def check_working_dir(self, config: ServerConfig) -> tuple[bool, str]:
         """Check if working directory exists and is accessible."""
         if config.working_dir.exists():
             if config.working_dir.is_dir():
-                return True, str(config.working_dir)
-            return False, "Path exists but is not a directory"
-        return False, f"Directory not found: {config.working_dir}"
+                return True, str(config.working_dir)[:30] + "..."
+            return False, "Not a directory"
+        return False, "Not found"
 
     def run_all(self, config: ServerConfig) -> dict:
         """Run all system checks."""
         self.results = {
-            "python": self.check_python_version(),
-            "claude_code": self.check_claude_code(),
-            "tailscale": self.check_tailscale(),
-            "working_dir": self.check_working_dir(config),
+            "Python": self.check_python_version(),
+            "Claude Code": self.check_claude_code(),
+            "Tailscale": self.check_tailscale(),
+            "Working Dir": self.check_working_dir(config),
         }
         return self.results
 
 
-class StatusWidget(Static):
-    """Widget showing system status."""
-
-    def __init__(self, title: str, status: bool, message: str):
-        super().__init__()
-        self.title = title
-        self.status = status
-        self.message = message
-
-    def compose(self) -> ComposeResult:
-        icon = "✓" if self.status else "✗"
-        color = "green" if self.status else "red"
-        yield Label(f"[{color}]{icon}[/] [bold]{self.title}[/]: {self.message}")
-
-
-class MenuOption(ListItem):
-    """A menu option item."""
-
-    def __init__(self, key: str, title: str, description: str):
-        super().__init__()
-        self.key = key
-        self.title = title
-        self.description = description
-
-    def compose(self) -> ComposeResult:
-        yield Label(f"[bold cyan]{self.title}[/]")
-        yield Label(f"[dim]{self.description}[/]")
-
-
-class MainMenu(Screen):
-    """Main menu screen with arrow key navigation."""
-
-    BINDINGS = [
-        Binding("q", "quit", "Quit"),
-        Binding("enter", "select", "Select"),
-        Binding("1", "option_1", "Start Server"),
-        Binding("2", "option_2", "Status"),
-        Binding("3", "option_3", "QR Code"),
-        Binding("4", "option_4", "Guest Codes"),
-        Binding("5", "option_5", "Config"),
-        Binding("6", "option_6", "Security"),
-        Binding("7", "option_7", "Setup"),
-    ]
-
-    def __init__(self, config: ServerConfig, system_check: SystemCheck):
-        super().__init__()
-        self.config = config
-        self.system_check = system_check
-
-    def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
-
-        with Container(id="main"):
-            # Banner
-            yield Static(
-                "[bold magenta]DARKCODE[/] [dim]Server[/]",
-                id="banner"
-            )
-            yield Static(f"[dim]v{__version__}[/]", id="version")
-
-            # System status
-            with Container(id="status-panel"):
-                yield Static("[bold]System Status[/]", id="status-title")
-                checks = self.system_check.results
-                for name, (ok, msg) in checks.items():
-                    icon = "[green]✓[/]" if ok else "[red]✗[/]"
-                    label = name.replace("_", " ").title()
-                    yield Static(f"{icon} {label}: [dim]{msg}[/]")
-
-            # Menu
-            with Container(id="menu-panel"):
-                yield Static("[bold]Menu[/] [dim](use ↑↓ arrows or number keys)[/]", id="menu-title")
-                yield ListView(
-                    MenuOption("start", "Start Server", "Launch the WebSocket server"),
-                    MenuOption("status", "Server Status", "Check if server is running"),
-                    MenuOption("qr", "Show QR Code", "Display connection QR code"),
-                    MenuOption("guest", "Guest Codes", "Create/manage friend access codes"),
-                    MenuOption("config", "Configuration", "View/edit server settings"),
-                    MenuOption("security", "Security", "TLS, tokens, blocked IPs"),
-                    MenuOption("setup", "Setup Wizard", "Re-run initial setup"),
-                    id="menu-list"
-                )
-
-        yield Footer()
-
-    def action_quit(self):
-        self.app.exit()
-
-    def action_select(self):
-        menu = self.query_one("#menu-list", ListView)
-        if menu.highlighted_child:
-            item = menu.highlighted_child
-            if isinstance(item, MenuOption):
-                self.handle_option(item.key)
-
-    def action_option_1(self):
-        self.handle_option("start")
-
-    def action_option_2(self):
-        self.handle_option("status")
-
-    def action_option_3(self):
-        self.handle_option("qr")
-
-    def action_option_4(self):
-        self.handle_option("guest")
-
-    def action_option_5(self):
-        self.handle_option("config")
-
-    def action_option_6(self):
-        self.handle_option("security")
-
-    def action_option_7(self):
-        self.handle_option("setup")
-
-    def handle_option(self, key: str):
-        """Handle menu option selection."""
-        if key == "start":
-            self.app.push_screen(StartServerScreen(self.config))
-        elif key == "status":
-            self.app.push_screen(StatusScreen(self.config))
-        elif key == "qr":
-            self.app.push_screen(QRScreen(self.config))
-        elif key == "guest":
-            self.app.push_screen(GuestScreen(self.config))
-        elif key == "config":
-            self.app.push_screen(ConfigScreen(self.config))
-        elif key == "security":
-            self.app.push_screen(SecurityScreen(self.config))
-        elif key == "setup":
-            self.app.push_screen(SetupScreen(self.config))
-
-    @on(ListView.Selected)
-    def on_list_selected(self, event: ListView.Selected):
-        if isinstance(event.item, MenuOption):
-            self.handle_option(event.item.key)
-
-
-class StartServerScreen(Screen):
-    """Screen for starting the server."""
-
-    BINDINGS = [
-        Binding("escape", "back", "Back"),
-        Binding("q", "back", "Back"),
-    ]
-
-    def __init__(self, config: ServerConfig):
-        super().__init__()
-        self.config = config
-
-    def compose(self) -> ComposeResult:
-        yield Header()
-        with Container():
-            yield Static("[bold cyan]Start Server[/]", id="title")
-            yield Static("")
-            yield Static("[bold]Connection Mode[/]")
-            yield ListView(
-                MenuOption("direct", "Direct LAN", "Connect over local network"),
-                MenuOption("tailscale", "Tailscale", "Secure mesh VPN"),
-                MenuOption("ssh", "SSH Tunnel", "Localhost only, most secure"),
-                id="mode-list"
-            )
-        yield Footer()
-
-    def action_back(self):
-        self.app.pop_screen()
-
-    @on(ListView.Selected)
-    def on_mode_selected(self, event: ListView.Selected):
-        if isinstance(event.item, MenuOption):
-            # Exit TUI and start server with selected mode
-            mode = event.item.key
-            self.app.exit(result=("start", mode))
-
-
-class StatusScreen(Screen):
-    """Screen showing server status."""
-
-    BINDINGS = [Binding("escape", "back", "Back")]
-
-    def __init__(self, config: ServerConfig):
-        super().__init__()
-        self.config = config
-
-    def compose(self) -> ComposeResult:
-        yield Header()
-        with Container():
-            yield Static("[bold cyan]Server Status[/]", id="title")
-            yield Static("")
-            yield Static(f"[cyan]Port:[/] {self.config.port}")
-            yield Static(f"[cyan]Working Dir:[/] {self.config.working_dir}")
-            yield Static(f"[cyan]Config Dir:[/] {self.config.config_dir}")
-            yield Static("")
-            # TODO: Check if daemon is running
-            yield Static("[yellow]Status check not yet implemented[/]")
-        yield Footer()
-
-    def action_back(self):
-        self.app.pop_screen()
-
-
-class QRScreen(Screen):
-    """Screen showing QR codes."""
-
-    BINDINGS = [Binding("escape", "back", "Back")]
-
-    def __init__(self, config: ServerConfig):
-        super().__init__()
-        self.config = config
-
-    def compose(self) -> ComposeResult:
-        yield Header()
-        with Container():
-            yield Static("[bold cyan]Connection QR Code[/]", id="title")
-            yield Static("")
-            yield Static("[dim]Generating QR code...[/]")
-            # TODO: Generate and display QR code
-        yield Footer()
-
-    def action_back(self):
-        self.app.pop_screen()
-
-
-class GuestScreen(Screen):
-    """Screen for managing guest codes."""
-
-    BINDINGS = [Binding("escape", "back", "Back")]
-
-    def __init__(self, config: ServerConfig):
-        super().__init__()
-        self.config = config
-
-    def compose(self) -> ComposeResult:
-        yield Header()
-        with Container():
-            yield Static("[bold cyan]Guest Access Codes[/]", id="title")
-            yield Static("")
-            yield ListView(
-                MenuOption("create", "Create New Code", "Generate a new guest code"),
-                MenuOption("list", "List Codes", "View all guest codes"),
-                MenuOption("revoke", "Revoke Code", "Disable a guest code"),
-                id="guest-menu"
-            )
-        yield Footer()
-
-    def action_back(self):
-        self.app.pop_screen()
-
-
-class ConfigScreen(Screen):
-    """Screen for configuration."""
-
-    BINDINGS = [Binding("escape", "back", "Back")]
-
-    def __init__(self, config: ServerConfig):
-        super().__init__()
-        self.config = config
-
-    def compose(self) -> ComposeResult:
-        yield Header()
-        with Container():
-            yield Static("[bold cyan]Configuration[/]", id="title")
-            yield Static("")
-            yield Static(f"[cyan]Port:[/] {self.config.port}")
-            yield Static(f"[cyan]Working Dir:[/] {self.config.working_dir}")
-            yield Static(f"[cyan]Server Name:[/] {self.config.server_name}")
-            yield Static(f"[cyan]Token:[/] {self.config.token[:4]}{'*' * 16}")
-            yield Static(f"[cyan]Max Sessions/IP:[/] {self.config.max_sessions_per_ip}")
-        yield Footer()
-
-    def action_back(self):
-        self.app.pop_screen()
-
-
-class SecurityScreen(Screen):
-    """Screen for security settings."""
-
-    BINDINGS = [Binding("escape", "back", "Back")]
-
-    def __init__(self, config: ServerConfig):
-        super().__init__()
-        self.config = config
-
-    def compose(self) -> ComposeResult:
-        yield Header()
-        with Container():
-            yield Static("[bold cyan]Security Settings[/]", id="title")
-            yield Static("")
-
-            tls_status = "[green]enabled[/]" if self.config.tls_enabled else "[yellow]disabled[/]"
-            mtls_status = "[green]enabled[/]" if self.config.mtls_enabled else "[dim]disabled[/]"
-            device_lock = "[green]enabled[/]" if self.config.device_lock else "[yellow]disabled[/]"
-
-            yield Static(f"[cyan]TLS:[/] {tls_status}")
-            yield Static(f"[cyan]mTLS:[/] {mtls_status}")
-            yield Static(f"[cyan]Device Lock:[/] {device_lock}")
-            yield Static(f"[cyan]Local Only:[/] {'[green]yes[/]' if self.config.local_only else '[yellow]no[/]'}")
-        yield Footer()
-
-    def action_back(self):
-        self.app.pop_screen()
-
-
-class SetupScreen(Screen):
-    """Setup wizard screen."""
-
-    BINDINGS = [Binding("escape", "back", "Back")]
-
-    def __init__(self, config: ServerConfig):
-        super().__init__()
-        self.config = config
-
-    def compose(self) -> ComposeResult:
-        yield Header()
-        with Container():
-            yield Static("[bold cyan]Setup Wizard[/]", id="title")
-            yield Static("")
-            yield Static("[dim]Setup wizard coming soon...[/]")
-            yield Static("")
-            yield Static("For now, use: [bold]darkcode setup[/]")
-        yield Footer()
-
-    def action_back(self):
-        self.app.pop_screen()
-
-
-class DarkCodeTUI(App):
-    """Main TUI application."""
-
-    CSS = """
-    #main {
-        padding: 1;
-    }
-
-    #banner {
-        text-align: center;
-        padding: 1;
-    }
-
-    #version {
-        text-align: center;
-        margin-bottom: 1;
-    }
-
-    #status-panel {
-        border: solid $primary;
-        padding: 1;
-        margin-bottom: 1;
-    }
-
-    #status-title {
-        margin-bottom: 1;
-    }
-
-    #menu-panel {
-        border: solid $secondary;
-        padding: 1;
-    }
-
-    #menu-title {
-        margin-bottom: 1;
-    }
-
-    #menu-list {
-        height: auto;
-    }
-
-    MenuOption {
-        padding: 1;
-    }
-
-    MenuOption:hover {
-        background: $boost;
-    }
-
-    ListView > ListItem.--highlight {
-        background: $accent;
-    }
-
-    #title {
-        text-align: center;
-        padding: 1;
-        margin-bottom: 1;
-    }
-    """
-
-    TITLE = "DarkCode Server"
-    SUB_TITLE = f"v{__version__}"
+class DarkCodeTUI:
+    """Main TUI application using pyTermTk."""
+
+    # ASCII art banner
+    BANNER = """
+██████╗  █████╗ ██████╗ ██╗  ██╗ ██████╗ ██████╗ ██████╗ ███████╗
+██╔══██╗██╔══██╗██╔══██╗██║ ██╔╝██╔════╝██╔═══██╗██╔══██╗██╔════╝
+██║  ██║███████║██████╔╝█████╔╝ ██║     ██║   ██║██║  ██║█████╗
+██║  ██║██╔══██║██╔══██╗██╔═██╗ ██║     ██║   ██║██║  ██║██╔══╝
+██████╔╝██║  ██║██║  ██║██║  ██╗╚██████╗╚██████╔╝██████╔╝███████╗
+╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
+"""
 
     def __init__(self, config: Optional[ServerConfig] = None):
-        super().__init__()
         self.config = config or ServerConfig.load()
         self.system_check = SystemCheck()
+        self.result = None
+        self.root = None
+        self._selected_index = 0
+        self._menu_items = []
 
-    def on_mount(self):
-        # Run system checks
-        self.system_check.run_all(self.config)
-        # Show main menu
-        self.push_screen(MainMenu(self.config, self.system_check))
+    def _get_banner_colored(self) -> ttk.TTkString:
+        """Get the banner with gradient colors."""
+        lines = self.BANNER.strip().split('\n')
+        colored_lines = []
+
+        # Purple to cyan gradient
+        colors = [
+            ttk.TTkColor.fg('#ff00ff'),  # Magenta
+            ttk.TTkColor.fg('#dd00ff'),
+            ttk.TTkColor.fg('#bb00ff'),
+            ttk.TTkColor.fg('#9900ff'),  # Purple
+            ttk.TTkColor.fg('#7700ff'),
+            ttk.TTkColor.fg('#5500ff'),
+        ]
+
+        for i, line in enumerate(lines):
+            color = colors[min(i, len(colors) - 1)]
+            colored_lines.append(ttk.TTkString(line, color))
+
+        return ttk.TTkString('\n').join(colored_lines)
+
+    def _create_status_frame(self) -> ttk.TTkFrame:
+        """Create the system status frame."""
+        checks = self.system_check.run_all(self.config)
+
+        frame = ttk.TTkFrame(
+            title=" System Status ",
+            border=True,
+            size=(50, len(checks) + 2)
+        )
+
+        layout = ttk.TTkVBoxLayout()
+        frame.setLayout(layout)
+
+        for name, (ok, msg) in checks.items():
+            icon = "✓" if ok else "✗"
+            color = ttk.TTkColor.fg('#00ff00') if ok else ttk.TTkColor.fg('#ff0000')
+            text = ttk.TTkString(f" {icon} ", color) + ttk.TTkString(f"{name}: ") + ttk.TTkString(msg, ttk.TTkColor.fg('#888888'))
+            label = ttk.TTkLabel(text=text)
+            layout.addWidget(label)
+
+        return frame
+
+    def _create_menu_frame(self) -> ttk.TTkFrame:
+        """Create the main menu frame with selectable items."""
+        self._menu_items = [
+            ("start", "Start Server", "Launch the WebSocket server", "direct"),
+            ("start_ts", "Start (Tailscale)", "Start with Tailscale mode", "tailscale"),
+            ("start_ssh", "Start (SSH Tunnel)", "Localhost only, most secure", "ssh"),
+            ("status", "Server Status", "Check if server is running", None),
+            ("qr", "Show QR Code", "Display connection QR code", None),
+            ("guest", "Guest Codes", "Create/manage friend access codes", None),
+            ("config", "Configuration", "View/edit server settings", None),
+            ("security", "Security", "TLS, tokens, blocked IPs", None),
+            ("setup", "Setup Wizard", "Re-run initial setup", None),
+            ("quit", "Quit", "Exit the application", None),
+        ]
+
+        frame = ttk.TTkFrame(
+            title=" Menu ",
+            border=True,
+            size=(50, len(self._menu_items) + 3)
+        )
+
+        layout = ttk.TTkVBoxLayout()
+        frame.setLayout(layout)
+
+        # Instructions
+        hint = ttk.TTkLabel(text=ttk.TTkString(" ↑↓ Navigate  Enter Select  q Quit", ttk.TTkColor.fg('#666666')))
+        layout.addWidget(hint)
+
+        # Menu list widget
+        self._list_widget = ttk.TTkList(size=(48, len(self._menu_items)))
+
+        for key, title, desc, _ in self._menu_items:
+            text = f"  {title}"
+            self._list_widget.addItem(ttk.TTkString(text))
+
+        # Select first item
+        self._list_widget.setCurrentRow(0)
+
+        # Connect selection signal
+        self._list_widget.itemClicked.connect(self._on_item_clicked)
+
+        layout.addWidget(self._list_widget)
+
+        return frame
+
+    def _on_item_clicked(self, item):
+        """Handle menu item selection."""
+        idx = self._list_widget.currentRow()
+        if 0 <= idx < len(self._menu_items):
+            key, _, _, mode = self._menu_items[idx]
+            self._handle_selection(key, mode)
+
+    def _handle_selection(self, key: str, mode: Optional[str]):
+        """Handle a menu selection."""
+        if key == "quit":
+            self.root.quit()
+        elif key.startswith("start"):
+            self.result = ("start", mode or "direct")
+            self.root.quit()
+        elif key == "status":
+            self.result = ("status", None)
+            self.root.quit()
+        elif key == "qr":
+            self.result = ("qr", None)
+            self.root.quit()
+        elif key == "guest":
+            self.result = ("guest", None)
+            self.root.quit()
+        elif key == "config":
+            self.result = ("config", None)
+            self.root.quit()
+        elif key == "security":
+            self.result = ("security", None)
+            self.root.quit()
+        elif key == "setup":
+            self.result = ("setup", None)
+            self.root.quit()
+
+    def run(self) -> Optional[tuple]:
+        """Run the TUI application."""
+        try:
+            # Create the main TTk application
+            self.root = ttk.TTk(
+                title="DarkCode Server",
+                sigmask=(
+                    ttk.TTkTerm.Sigmask.CTRL_C |
+                    ttk.TTkTerm.Sigmask.CTRL_S |
+                    ttk.TTkTerm.Sigmask.CTRL_Z
+                )
+            )
+
+            # Create main layout
+            main_layout = ttk.TTkGridLayout()
+            self.root.setLayout(main_layout)
+
+            # Create a main window/frame
+            main_frame = ttk.TTkFrame(border=False)
+            main_frame_layout = ttk.TTkVBoxLayout()
+            main_frame.setLayout(main_frame_layout)
+
+            # Banner
+            banner_label = ttk.TTkLabel(text=self._get_banner_colored())
+            main_frame_layout.addWidget(banner_label)
+
+            # Version
+            version_text = ttk.TTkString(f"                           v{__version__}", ttk.TTkColor.fg('#666666'))
+            version_label = ttk.TTkLabel(text=version_text)
+            main_frame_layout.addWidget(version_label)
+
+            # Spacer
+            main_frame_layout.addWidget(ttk.TTkSpacer())
+
+            # Horizontal layout for status and menu
+            h_layout = ttk.TTkHBoxLayout()
+
+            # Status frame
+            status_frame = self._create_status_frame()
+            h_layout.addWidget(status_frame)
+
+            # Spacer between
+            h_layout.addWidget(ttk.TTkSpacer())
+
+            # Menu frame
+            menu_frame = self._create_menu_frame()
+            h_layout.addWidget(menu_frame)
+
+            h_layout.addWidget(ttk.TTkSpacer())
+
+            container = ttk.TTkFrame(border=False)
+            container.setLayout(h_layout)
+            main_frame_layout.addWidget(container)
+
+            # Footer
+            main_frame_layout.addWidget(ttk.TTkSpacer())
+            footer = ttk.TTkLabel(text=ttk.TTkString(" DarkCode Server - Remote Claude Code from your phone ", ttk.TTkColor.fg('#555555')))
+            main_frame_layout.addWidget(footer)
+
+            main_layout.addWidget(main_frame, 0, 0)
+
+            # Handle keyboard shortcuts
+            @ttk.pyTTkSlot(ttk.TTkKeyEvent)
+            def _key_handler(evt):
+                if evt.key == ttk.TTkK.Key_Q or evt.key == ttk.TTkK.Key_Escape:
+                    self.root.quit()
+                elif evt.key == ttk.TTkK.Key_Enter or evt.key == ttk.TTkK.Key_Return:
+                    idx = self._list_widget.currentRow()
+                    if 0 <= idx < len(self._menu_items):
+                        key, _, _, mode = self._menu_items[idx]
+                        self._handle_selection(key, mode)
+
+            self.root.keyEvent = _key_handler
+
+            # Run the application
+            self.root.mainloop()
+
+            return self.result
+
+        except Exception as e:
+            # If TUI fails, return None to fall back to classic menu
+            import traceback
+            traceback.print_exc()
+            return None
 
 
 def run_tui(config: Optional[ServerConfig] = None) -> Optional[tuple]:
     """Run the TUI and return any result."""
+    # Show the animated banner first
+    show_banner()
+
+    # Then launch the TUI
     app = DarkCodeTUI(config)
     return app.run()

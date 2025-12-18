@@ -631,9 +631,25 @@ def main(ctx, version, classic):
                         else:
                             config.local_only = False
                         # Call the start command logic
-                        ctx.invoke(start, local_only=config.local_only)
-            except ImportError:
-                console.print("[yellow]TUI requires textual. Falling back to classic menu.[/]")
+                        ctx.invoke(start, local_only=config.local_only, no_banner=True)
+                    elif action == "status":
+                        menu_status()
+                    elif action == "qr":
+                        menu_qr_code()
+                    elif action == "guest":
+                        menu_guest_codes()
+                    elif action == "config":
+                        menu_config()
+                    elif action == "security":
+                        menu_security()
+                    elif action == "setup":
+                        setup_wizard_menu()
+            except ImportError as e:
+                console.print(f"[yellow]TUI requires pyTermTk. Falling back to classic menu.[/]")
+                console.print(f"[dim]Install with: pip install pyTermTk[/]")
+                interactive_menu()
+            except Exception as e:
+                console.print(f"[yellow]TUI error: {e}. Falling back to classic menu.[/]")
                 interactive_menu()
 
 
