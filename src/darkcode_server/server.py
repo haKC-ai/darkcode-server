@@ -896,6 +896,265 @@ class DarkCodeServer:
                     "chatSessionId": chat_session_id,
                 }))
 
+        # === File Operations ===
+        elif msg_type == "list_files":
+            # List files in a directory
+            path = msg.get("path", "")
+            await self._handle_list_files(session, path)
+
+        elif msg_type == "create_directory":
+            # Create a new directory
+            path = msg.get("path", "")
+            await self._handle_create_directory(session, path)
+
+        elif msg_type == "read_file":
+            # Read file contents
+            path = msg.get("path", "")
+            await self._handle_read_file(session, path)
+
+        elif msg_type == "delete_file":
+            # Delete a file or directory
+            path = msg.get("path", "")
+            await self._handle_delete_file(session, path)
+
+    def _resolve_safe_path(self, session: Session, path: str) -> Optional[Path]:
+        """Resolve a path safely within the working directory.
+
+        Returns None if path would escape the working directory.
+        """
+        if not path:
+            return session.working_dir
+
+        # Resolve the path relative to working directory
+        try:
+            target = (session.working_dir / path).resolve()
+            # Ensure it's within working directory (prevent directory traversal)
+            if session.working_dir.resolve() in target.parents or target == session.working_dir.resolve():
+                return target
+            # Also allow if target starts with working_dir (for paths inside)
+            working_resolved = session.working_dir.resolve()
+            if str(target).startswith(str(working_resolved)):
+                return target
+        except (ValueError, OSError):
+            pass
+        return None
+
+    async def _handle_list_files(self, session: Session, path: str):
+        """List files in a directory."""
+        target = self._resolve_safe_path(session, path)
+
+        if not target:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": "Invalid path: outside working directory",
+            }))
+            return
+
+        if not target.exists():
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Path does not exist: {path}",
+            }))
+            return
+
+        if not target.is_dir():
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Not a directory: {path}",
+            }))
+            return
+
+        try:
+            files = []
+            for item in sorted(target.iterdir()):
+                stat = item.stat()
+                files.append({
+                    "name": item.name,
+                    "path": str(item.relative_to(session.working_dir)),
+                    "isDirectory": item.is_dir(),
+                    "size": stat.st_size if item.is_file() else 0,
+                    "modified": int(stat.st_mtime * 1000),
+                })
+
+            await session.websocket.send(json.dumps({
+                "type": "file_list",
+                "path": path or ".",
+                "files": files,
+            }))
+        except PermissionError:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Permission denied: {path}",
+            }))
+        except Exception as e:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Failed to list files: {e}",
+            }))
+
+    async def _handle_create_directory(self, session: Session, path: str):
+        """Create a new directory."""
+        if not path:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": "Path is required",
+            }))
+            return
+
+        target = self._resolve_safe_path(session, path)
+
+        if not target:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": "Invalid path: outside working directory",
+            }))
+            return
+
+        if target.exists():
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Path already exists: {path}",
+            }))
+            return
+
+        try:
+            target.mkdir(parents=True, exist_ok=False)
+            await session.websocket.send(json.dumps({
+                "type": "directory_created",
+                "path": path,
+            }))
+        except PermissionError:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Permission denied: {path}",
+            }))
+        except Exception as e:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Failed to create directory: {e}",
+            }))
+
+    async def _handle_read_file(self, session: Session, path: str):
+        """Read file contents."""
+        if not path:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": "Path is required",
+            }))
+            return
+
+        target = self._resolve_safe_path(session, path)
+
+        if not target:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": "Invalid path: outside working directory",
+            }))
+            return
+
+        if not target.exists():
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": f"File not found: {path}",
+            }))
+            return
+
+        if not target.is_file():
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Not a file: {path}",
+            }))
+            return
+
+        # Limit file size to 1MB for reading
+        MAX_READ_SIZE = 1024 * 1024
+        if target.stat().st_size > MAX_READ_SIZE:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": f"File too large (max {MAX_READ_SIZE // 1024}KB)",
+            }))
+            return
+
+        try:
+            content = target.read_text(encoding="utf-8", errors="replace")
+            await session.websocket.send(json.dumps({
+                "type": "file_content",
+                "path": path,
+                "content": content,
+                "size": len(content),
+            }))
+        except PermissionError:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Permission denied: {path}",
+            }))
+        except Exception as e:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Failed to read file: {e}",
+            }))
+
+    async def _handle_delete_file(self, session: Session, path: str):
+        """Delete a file or empty directory."""
+        if not path:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": "Path is required",
+            }))
+            return
+
+        target = self._resolve_safe_path(session, path)
+
+        if not target:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": "Invalid path: outside working directory",
+            }))
+            return
+
+        if not target.exists():
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Path not found: {path}",
+            }))
+            return
+
+        # Don't allow deleting the working directory itself
+        if target.resolve() == session.working_dir.resolve():
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": "Cannot delete working directory",
+            }))
+            return
+
+        try:
+            if target.is_file():
+                target.unlink()
+            elif target.is_dir():
+                # Only delete empty directories for safety
+                if any(target.iterdir()):
+                    await session.websocket.send(json.dumps({
+                        "type": "error",
+                        "message": "Directory not empty",
+                    }))
+                    return
+                target.rmdir()
+
+            await session.websocket.send(json.dumps({
+                "type": "file_deleted",
+                "path": path,
+            }))
+        except PermissionError:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Permission denied: {path}",
+            }))
+        except Exception as e:
+            await session.websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Failed to delete: {e}",
+            }))
+
     async def _destroy_session(self, session: Session):
         """Cleanup a session."""
         if session.process:
