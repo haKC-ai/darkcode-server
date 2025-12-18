@@ -93,6 +93,10 @@ class SystemCheck:
             return False, "Not running"
         return False, "Not installed"
 
+    def is_tailscale_installed(self) -> bool:
+        """Check if Tailscale binary exists."""
+        return shutil.which("tailscale") is not None
+
     def check_python_version(self) -> tuple[bool, str]:
         """Check Python version."""
         version = sys.version_info
@@ -181,6 +185,13 @@ class DarkCodeTUI:
             key, title, mode = self._menu_items[index]
 
             if key == "quit":
+                self.root.quit()
+            elif key == "start_tailscale":
+                # Check if Tailscale is installed before starting in that mode
+                if not self.system_check.is_tailscale_installed():
+                    self.result = ("install_tailscale", None)
+                else:
+                    self.result = ("start", mode)
                 self.root.quit()
             elif key.startswith("start_"):
                 self.result = ("start", mode)

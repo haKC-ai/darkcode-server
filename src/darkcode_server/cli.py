@@ -601,6 +601,49 @@ def menu_uninstall():
     console.print("[dim]Run 'pip uninstall darkcode-server' to remove the package.[/]")
 
 
+def prompt_install_tailscale():
+    """Prompt user to install Tailscale."""
+    console.print("\n[bold yellow]Tailscale is not installed[/]\n")
+    console.print("Tailscale provides a secure mesh VPN that makes connecting")
+    console.print("from your phone easy and secure, even outside your home network.\n")
+
+    console.print("[bold cyan]Benefits:[/]")
+    console.print("  • Secure encrypted connection from anywhere")
+    console.print("  • No port forwarding required")
+    console.print("  • Works across networks (cellular, coffee shop wifi, etc.)")
+    console.print("  • Free for personal use\n")
+
+    system = platform.system()
+
+    if system == "Darwin":
+        console.print("[bold]Install on macOS:[/]")
+        console.print("  brew install tailscale")
+        console.print("  [dim]or download from https://tailscale.com/download/mac[/]\n")
+
+        if Confirm.ask("Install with Homebrew now?", default=True):
+            console.print("\n[dim]Installing Tailscale...[/]")
+            result = subprocess.run(["brew", "install", "tailscale"], capture_output=False)
+            if result.returncode == 0:
+                console.print("\n[green]Tailscale installed![/]")
+                console.print("Run [bold]tailscale up[/] to connect to your tailnet.")
+            else:
+                console.print("\n[red]Installation failed. Try installing manually.[/]")
+
+    elif system == "Linux":
+        console.print("[bold]Install on Linux:[/]")
+        console.print("  curl -fsSL https://tailscale.com/install.sh | sh")
+        console.print("  [dim]or see https://tailscale.com/download/linux[/]\n")
+
+    else:
+        console.print(f"[bold]Install on {system}:[/]")
+        console.print("  Visit https://tailscale.com/download\n")
+
+    console.print("[dim]After installing, run 'tailscale up' to connect.[/]")
+    console.print("[dim]Then restart darkcode and select Tailscale mode.[/]\n")
+
+    Prompt.ask("Press Enter to continue")
+
+
 # Click CLI commands
 @click.group(invoke_without_command=True)
 @click.option("--version", "-v", is_flag=True, help="Show version")
@@ -644,6 +687,8 @@ def main(ctx, version, classic):
                         menu_security()
                     elif action == "setup":
                         setup_wizard_menu()
+                    elif action == "install_tailscale":
+                        prompt_install_tailscale()
             except ImportError as e:
                 console.print(f"[yellow]TUI requires pyTermTk. Falling back to classic menu.[/]")
                 console.print(f"[dim]Install with: pip install pyTermTk[/]")
