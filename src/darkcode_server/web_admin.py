@@ -556,16 +556,28 @@ class WebAdminHandler:
                     session_cookie = self._generate_session_cookie()
                     WebAdminHandler._authenticated_sessions.add(session_cookie)
                     logging.info(f"Login successful, setting cookie: {session_cookie[:8]}...")
-                    # Use proper 302 redirect with Set-Cookie header
-                    cookie_value = f"darkcode_admin_session={session_cookie}; Path=/; SameSite=Lax; Max-Age=86400"
+                    # Return HTML page that sets cookie via JS then redirects
+                    # This works around websockets library issues with Set-Cookie on 302
+                    redirect_html = f'''<!DOCTYPE html>
+<html>
+<head><title>Redirecting...</title></head>
+<body style="background:#0a0a0f;color:#e0e0e0;font-family:monospace;display:flex;justify-content:center;align-items:center;height:100vh;">
+<div style="text-align:center;">
+<p>Logging in...</p>
+</div>
+<script>
+document.cookie = "darkcode_admin_session={session_cookie}; path=/; max-age=86400; samesite=lax";
+window.location.href = "/admin";
+</script>
+</body>
+</html>'''
                     return (
-                        302,
+                        200,
                         {
-                            'Location': '/admin',
-                            'Set-Cookie': cookie_value,
+                            'Content-Type': 'text/html; charset=utf-8',
                             'Cache-Control': 'no-store'
                         },
-                        b''
+                        redirect_html.encode('utf-8')
                     )
                 else:
                     logging.warning(f"Login failed - PIN mismatch")
