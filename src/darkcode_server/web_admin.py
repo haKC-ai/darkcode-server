@@ -519,9 +519,17 @@ class WebAdminHandler:
         clean_path = parsed.path
         query_params = parse_qs(parsed.query)
 
+        # Debug: log cookie handling
+        import logging
+        logging.info(f"[WebAdmin] Path: {clean_path}, Cookies received: {list(cookies.keys())}")
+        logging.info(f"[WebAdmin] Session ID from cookie: {cookies.get('darkcode_admin_session', 'NONE')[:16] if cookies.get('darkcode_admin_session') else 'NONE'}...")
+        logging.info(f"[WebAdmin] Known sessions: {[s[:8] for s in WebAdminHandler._authenticated_sessions]}")
+
         # Route requests
         if clean_path == '/admin' or clean_path == '/admin/':
-            if self._is_authenticated(cookies):
+            is_auth = self._is_authenticated(cookies)
+            logging.info(f"[WebAdmin] Auth check result: {is_auth}")
+            if is_auth:
                 return self._dashboard_page()
             else:
                 return self._login_page()
