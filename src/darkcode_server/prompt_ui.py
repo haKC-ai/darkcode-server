@@ -1,489 +1,360 @@
-"""Interactive split-pane TUI using prompt_toolkit."""
+"""Simple interactive menu using rich for display."""
 
-import asyncio
-import io
-import platform
-import subprocess
+import os
 import sys
-from contextlib import redirect_stdout, redirect_stderr
-from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional, Tuple
 
-from prompt_toolkit import Application
-from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import Layout, HSplit, VSplit, Window, WindowAlign
-from prompt_toolkit.layout.controls import FormattedTextControl, BufferControl
-from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.widgets import Frame, TextArea, Box
-from prompt_toolkit.styles import Style
-from prompt_toolkit.formatted_text import HTML, FormattedText, ANSI
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.prompt import Prompt, Confirm
+
+console = Console()
 
 
-# Catppuccin-inspired theme
-STYLE = Style.from_dict({
-    # Base
-    'frame': 'bg:#1e1e2e #cdd6f4',
-    'frame.border': '#89b4fa',
-    'frame.label': '#f5c2e7 bold',
-
-    # Menu
-    'menu': 'bg:#1e1e2e #cdd6f4',
-    'menu.selected': 'bg:#313244 #f5c2e7 bold',
-    'menu.item': '#cdd6f4',
-    'menu.key': '#89b4fa bold',
-
-    # Output
-    'output': 'bg:#11111b #cdd6f4',
-    'output.title': '#a6e3a1 bold',
-    'output.info': '#89b4fa',
-    'output.success': '#a6e3a1',
-    'output.warning': '#f9e2af',
-    'output.error': '#f38ba8',
-
-    # Status bar
-    'status': 'bg:#313244 #cdd6f4',
-    'status.key': '#f5c2e7 bold',
-})
+def clear_screen():
+    """Clear the terminal screen."""
+    os.system('cls' if os.name == 'nt' else 'clear')
 
 
-class SplitPaneTUI:
-    """Split-pane terminal UI with menu on left and output on right."""
+def show_header():
+    """Show the app header."""
+    console.print(Panel(
+        "[bold magenta]DARKCODE SERVER[/]",
+        border_style="magenta",
+    ))
+    console.print()
 
-    def __init__(self):
-        self.selected_index = 0
-        self.output_lines = []
-        self.running = True
-        self.current_submenu = None  # None = main menu, or submenu name
 
-        # Menu items: (key, label, action_name)
-        self.main_menu = [
-            ('1', 'Start Server', 'start'),
-            ('2', 'Server Status', 'status'),
-            ('3', 'Show QR Code', 'qr'),
-            ('4', 'Guest Codes', 'guest'),
-            ('5', 'Configuration', 'config'),
-            ('6', 'Security', 'security'),
-            ('7', 'Setup Wizard', 'setup'),
-            ('q', 'Quit', 'quit'),
-        ]
+def show_main_menu() -> Optional[str]:
+    """Show main menu and get selection."""
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("", style="bold cyan", width=4)
+    table.add_column("", style="white")
 
-        self.guest_menu = [
-            ('1', 'Create New Code', 'guest_create'),
-            ('2', 'List All Codes', 'guest_list'),
-            ('3', 'Revoke a Code', 'guest_revoke'),
-            ('4', 'Show QR for Code', 'guest_qr'),
-            ('b', 'Back', 'back'),
-        ]
+    options = [
+        ("1", "Start Server"),
+        ("2", "Server Status"),
+        ("3", "Show QR Code"),
+        ("4", "Guest Codes"),
+        ("5", "Configuration"),
+        ("6", "Security Settings"),
+        ("7", "Setup Wizard"),
+        ("q", "Quit"),
+    ]
 
-        self.connection_menu = [
-            ('1', 'Direct LAN', 'direct'),
-            ('2', 'Tailscale', 'tailscale'),
-            ('3', 'SSH Tunnel', 'ssh'),
-            ('b', 'Back', 'back'),
-        ]
+    for key, label in options:
+        table.add_row(f"[{key}]", label)
 
-        self.security_menu = [
-            ('1', 'Security Status', 'security_status'),
-            ('2', 'Toggle TLS', 'security_tls'),
-            ('3', 'Toggle mTLS', 'security_mtls'),
-            ('4', 'Toggle Device Lock', 'security_device_lock'),
-            ('5', 'Reset Auth Token', 'security_reset_token'),
-            ('6', 'View Blocked IPs', 'security_blocked'),
-            ('7', 'Unbind Device', 'security_unbind'),
-            ('b', 'Back', 'back'),
-        ]
+    console.print(Panel(table, title="[bold]Menu[/]", border_style="cyan"))
 
-        self._build_app()
+    choice = Prompt.ask("\n[cyan]Select[/]", choices=["1", "2", "3", "4", "5", "6", "7", "q"], default="1")
 
-    @property
-    def current_menu(self):
-        """Get the current menu items."""
-        if self.current_submenu == 'guest':
-            return self.guest_menu
-        elif self.current_submenu == 'connection':
-            return self.connection_menu
-        elif self.current_submenu == 'security':
-            return self.security_menu
-        return self.main_menu
+    if choice == "q":
+        return None
 
-    @property
-    def menu_title(self):
-        """Get the current menu title."""
-        if self.current_submenu == 'guest':
-            return 'Guest Codes'
-        elif self.current_submenu == 'connection':
-            return 'Connection Mode'
-        elif self.current_submenu == 'security':
-            return 'Security'
-        return 'DarkCode Server'
+    actions = {
+        "1": "start",
+        "2": "status",
+        "3": "qr",
+        "4": "guest",
+        "5": "config",
+        "6": "security",
+        "7": "setup",
+    }
+    return actions.get(choice)
 
-    def _get_menu_text(self):
-        """Generate the menu text."""
-        lines = []
-        menu = self.current_menu
 
-        for i, (key, label, _) in enumerate(menu):
-            if i == self.selected_index:
-                lines.append(('class:menu.selected', f' [{key}] {label} \n'))
-            else:
-                lines.append(('class:menu.item', f' '))
-                lines.append(('class:menu.key', f'[{key}]'))
-                lines.append(('class:menu.item', f' {label}\n'))
+def show_connection_menu() -> Optional[str]:
+    """Show connection mode selection."""
+    from darkcode_server.config import ServerConfig
+    config = ServerConfig.load()
 
-        return lines
+    tailscale_ip = config.get_tailscale_ip()
 
-    def _get_output_text(self):
-        """Generate the output panel text."""
-        if not self.output_lines:
-            return [('class:output.info', '\n  Select an option from the menu\n  to see output here.\n\n'),
-                    ('class:output', '  Use ↑↓ or number keys to navigate\n'),
-                    ('class:output', '  Press Enter to select\n'),
-                    ('class:output', '  Press q to quit\n')]
+    console.print("\n[bold cyan]Connection Mode[/]\n")
 
-        result = []
-        for line in self.output_lines[-50:]:  # Keep last 50 lines
-            if line.startswith('[OK]') or line.startswith('[SUCCESS]') or line.startswith('✓'):
-                result.append(('class:output.success', line + '\n'))
-            elif line.startswith('[ERROR]') or line.startswith('[FAIL]') or line.startswith('✗'):
-                result.append(('class:output.error', line + '\n'))
-            elif line.startswith('[WARN]') or line.startswith('⚠'):
-                result.append(('class:output.warning', line + '\n'))
-            elif line.startswith('###') or line.startswith('==='):
-                result.append(('class:output.title', line + '\n'))
-            else:
-                result.append(('class:output', line + '\n'))
-        return result
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("", style="bold cyan", width=4)
+    table.add_column("", style="white")
 
-    def _get_status_text(self):
-        """Generate status bar text."""
-        return [
-            ('class:status', ' '),
-            ('class:status.key', '↑↓'),
-            ('class:status', ' Navigate  '),
-            ('class:status.key', 'Enter'),
-            ('class:status', ' Select  '),
-            ('class:status.key', 'q'),
-            ('class:status', ' Quit '),
-        ]
+    table.add_row("[1]", "Direct LAN - Connect over local network")
+    if tailscale_ip:
+        table.add_row("[2]", f"Tailscale ({tailscale_ip}) - Secure mesh VPN")
+    else:
+        table.add_row("[2]", "Tailscale - Not detected")
+    table.add_row("[3]", "SSH Tunnel - Localhost only, most secure")
+    table.add_row("[b]", "Back")
 
-    def add_output(self, text: str):
-        """Add text to the output panel."""
-        for line in text.split('\n'):
-            if line.strip():
-                self.output_lines.append(line)
-        self.app.invalidate()
+    console.print(table)
 
-    def clear_output(self):
-        """Clear the output panel."""
-        self.output_lines = []
-        self.app.invalidate()
+    choice = Prompt.ask("\n[cyan]Select[/]", choices=["1", "2", "3", "b"], default="1")
 
-    def _build_app(self):
-        """Build the prompt_toolkit application."""
-        kb = KeyBindings()
+    if choice == "b":
+        return None
 
-        @kb.add('up')
-        def _(event):
-            self.selected_index = (self.selected_index - 1) % len(self.current_menu)
+    modes = {"1": "direct", "2": "tailscale", "3": "ssh"}
+    return modes.get(choice)
 
-        @kb.add('down')
-        def _(event):
-            self.selected_index = (self.selected_index + 1) % len(self.current_menu)
 
-        @kb.add('enter')
-        def _(event):
-            self._execute_selection()
+def show_guest_menu() -> Optional[str]:
+    """Show guest code management menu."""
+    console.print("\n[bold green]Guest Access Codes[/]\n")
 
-        @kb.add('q')
-        def _(event):
-            if self.current_submenu:
-                self.current_submenu = None
-                self.selected_index = 0
-            else:
-                self.running = False
-                event.app.exit()
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("", style="bold cyan", width=4)
+    table.add_column("", style="white")
 
-        @kb.add('escape')
-        def _(event):
-            if self.current_submenu:
-                self.current_submenu = None
-                self.selected_index = 0
-            else:
-                self.running = False
-                event.app.exit()
+    table.add_row("[1]", "Create New Code")
+    table.add_row("[2]", "List All Codes")
+    table.add_row("[3]", "Revoke a Code")
+    table.add_row("[4]", "Show QR for Code")
+    table.add_row("[b]", "Back")
 
-        # Number key shortcuts
-        for i in range(1, 10):
-            @kb.add(str(i))
-            def _(event, idx=i):
-                menu = self.current_menu
-                if idx <= len(menu):
-                    self.selected_index = idx - 1
-                    self._execute_selection()
+    console.print(table)
 
-        @kb.add('b')
-        def _(event):
-            if self.current_submenu:
-                self.current_submenu = None
-                self.selected_index = 0
+    choice = Prompt.ask("\n[cyan]Select[/]", choices=["1", "2", "3", "4", "b"], default="b")
 
-        # Layout
-        menu_window = Frame(
-            Window(
-                FormattedTextControl(self._get_menu_text),
-                width=Dimension(min=30, preferred=35),
-            ),
-            title=lambda: self.menu_title,
-            style='class:frame',
-        )
+    if choice == "b":
+        return None
 
-        output_window = Frame(
-            Window(
-                FormattedTextControl(self._get_output_text),
-                wrap_lines=True,
-            ),
-            title='Output',
-            style='class:frame',
-        )
+    actions = {"1": "guest_create", "2": "guest_list", "3": "guest_revoke", "4": "guest_qr"}
+    return actions.get(choice)
 
-        status_bar = Window(
-            FormattedTextControl(self._get_status_text),
-            height=1,
-            style='class:status',
-        )
 
-        root = HSplit([
-            VSplit([
-                menu_window,
-                output_window,
-            ]),
-            status_bar,
-        ])
+def show_security_menu() -> Optional[str]:
+    """Show security settings menu."""
+    from darkcode_server.config import ServerConfig
+    config = ServerConfig.load()
 
-        self.app = Application(
-            layout=Layout(root),
-            key_bindings=kb,
-            style=STYLE,
-            full_screen=True,
-            mouse_support=True,
-        )
+    console.print("\n[bold red]Security Settings[/]\n")
 
-    def _execute_selection(self):
-        """Execute the currently selected menu item."""
-        menu = self.current_menu
-        if self.selected_index >= len(menu):
-            return
+    # Current status
+    status_table = Table(show_header=False, box=None, padding=(0, 1))
+    status_table.add_column("Setting", style="cyan")
+    status_table.add_column("Value")
 
-        _, _, action = menu[self.selected_index]
+    status_table.add_row("TLS", "[green]enabled[/]" if config.tls_enabled else "[yellow]disabled[/]")
+    status_table.add_row("mTLS", "[green]enabled[/]" if config.mtls_enabled else "[dim]disabled[/]")
+    status_table.add_row("Device Lock", "[green]enabled[/]" if config.device_lock else "[yellow]disabled[/]")
+    status_table.add_row("Bound Device", config.bound_device_id[:12] + "..." if config.bound_device_id else "[dim]none[/]")
 
-        # Handle navigation
-        if action == 'quit':
-            self.running = False
-            self.app.exit()
-            return
-        elif action == 'back':
-            self.current_submenu = None
-            self.selected_index = 0
-            return
-        elif action == 'guest':
-            self.current_submenu = 'guest'
-            self.selected_index = 0
-            return
-        elif action == 'start':
-            self.current_submenu = 'connection'
-            self.selected_index = 0
-            self.add_output('=== Select Connection Mode ===')
-            return
-        elif action == 'security':
-            self.current_submenu = 'security'
-            self.selected_index = 0
-            return
+    console.print(status_table)
+    console.print()
 
-        # Execute action
-        self._run_action(action)
+    # Options
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("", style="bold cyan", width=4)
+    table.add_column("", style="white")
 
-    def _run_action(self, action: str):
-        """Run an action and display output."""
-        self.clear_output()
-        self.add_output(f'=== {action.replace("_", " ").title()} ===')
+    table.add_row("[1]", "Toggle TLS")
+    table.add_row("[2]", "Toggle mTLS")
+    table.add_row("[3]", "Toggle Device Lock")
+    table.add_row("[4]", "Reset Auth Token")
+    table.add_row("[5]", "View Blocked IPs")
+    table.add_row("[6]", "Unbind Device")
+    table.add_row("[b]", "Back")
 
-        try:
-            if action == 'status':
-                self._show_status()
-            elif action == 'qr':
-                self._show_qr()
-            elif action == 'config':
-                self._show_config()
-            elif action == 'setup':
-                self.add_output('Run: darkcode setup')
-                self.add_output('(Exiting to run setup wizard...)')
-                self.running = False
-                self.app.exit(result=('setup', None))
-            elif action in ('direct', 'tailscale', 'ssh'):
-                self._start_server(action)
-            elif action == 'guest_create':
-                self._guest_create()
-            elif action == 'guest_list':
-                self._guest_list()
-            elif action == 'guest_revoke':
-                self.add_output('Run: darkcode guest revoke <CODE>')
-            elif action == 'guest_qr':
-                self.add_output('Run: darkcode guest qr <CODE>')
-            elif action == 'security_status':
-                self._security_status()
-            elif action == 'security_tls':
-                self._toggle_tls()
-            elif action == 'security_mtls':
-                self._toggle_mtls()
-            elif action == 'security_device_lock':
-                self._toggle_device_lock()
-            elif action == 'security_reset_token':
-                self._reset_token()
-            elif action == 'security_blocked':
-                self._show_blocked()
-            elif action == 'security_unbind':
-                self._unbind_device()
-            else:
-                self.add_output(f'Action not implemented: {action}')
-        except Exception as e:
-            self.add_output(f'[ERROR] {e}')
+    console.print(table)
 
-    def _show_status(self):
-        """Show server status."""
-        from darkcode_server.config import ServerConfig
+    choice = Prompt.ask("\n[cyan]Select[/]", choices=["1", "2", "3", "4", "5", "6", "b"], default="b")
+
+    if choice == "b":
+        return None
+
+    actions = {
+        "1": "security_tls",
+        "2": "security_mtls",
+        "3": "security_device_lock",
+        "4": "security_reset_token",
+        "5": "security_blocked",
+        "6": "security_unbind",
+    }
+    return actions.get(choice)
+
+
+def execute_action(action: str) -> bool:
+    """Execute an action. Returns True to continue, False to exit."""
+    from darkcode_server.config import ServerConfig
+
+    if action == "status":
         config = ServerConfig.load()
+        console.print("\n[bold cyan]Server Status[/]\n")
 
-        self.add_output(f'Port: {config.port}')
-        self.add_output(f'Working Dir: {config.working_dir}')
-        self.add_output(f'Server Name: {config.server_name}')
-        self.add_output(f'TLS: {"enabled" if config.tls_enabled else "disabled"}')
-        self.add_output(f'Device Lock: {"enabled" if config.device_lock else "disabled"}')
+        table = Table(show_header=False, box=None)
+        table.add_column("Key", style="cyan")
+        table.add_column("Value")
 
-        # Check Tailscale
+        table.add_row("Port", str(config.port))
+        table.add_row("Working Dir", str(config.working_dir))
+        table.add_row("Server Name", config.server_name)
+        table.add_row("TLS", "enabled" if config.tls_enabled else "disabled")
+        table.add_row("Device Lock", "enabled" if config.device_lock else "disabled")
+
         tailscale_ip = config.get_tailscale_ip()
-        if tailscale_ip:
-            self.add_output(f'Tailscale: {tailscale_ip}')
-        else:
-            self.add_output('Tailscale: not detected')
+        table.add_row("Tailscale", tailscale_ip if tailscale_ip else "not detected")
 
-        # Check for running daemon
+        console.print(table)
+
+        # Check daemon
         try:
             from darkcode_server.daemon import DarkCodeDaemon
             pid = DarkCodeDaemon.get_running_pid(config)
             if pid:
-                self.add_output(f'[OK] Daemon running (PID {pid})')
+                console.print(f"\n[green]Daemon running (PID {pid})[/]")
             else:
-                self.add_output('Daemon: not running')
+                console.print("\n[dim]Daemon not running[/]")
         except:
             pass
 
-    def _show_qr(self):
-        """Show QR code info."""
-        from darkcode_server.config import ServerConfig
+        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        return True
+
+    elif action == "qr":
+        # Actually show the QR code
+        from darkcode_server.qrcode import print_server_info
         config = ServerConfig.load()
+        console.print()
+        print_server_info(config, console)
+        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        return True
 
-        self.add_output(f'Server: {config.server_name}')
-        self.add_output(f'Port: {config.port}')
-        self.add_output(f'Token: {config.token[:8]}...')
-
-        local_ips = config.get_local_ips()
-        for ip_info in local_ips:
-            self.add_output(f'  {ip_info["interface"]}: {ip_info["address"]}')
-
-        tailscale_ip = config.get_tailscale_ip()
-        if tailscale_ip:
-            self.add_output(f'  Tailscale: {tailscale_ip}')
-
-        self.add_output('')
-        self.add_output('Run: darkcode qr')
-        self.add_output('to see scannable QR code')
-
-    def _show_config(self):
-        """Show configuration."""
-        from darkcode_server.config import ServerConfig
+    elif action == "config":
         config = ServerConfig.load()
+        console.print("\n[bold cyan]Configuration[/]\n")
 
-        self.add_output(f'Port: {config.port}')
-        self.add_output(f'Working Dir: {config.working_dir}')
-        self.add_output(f'Server Name: {config.server_name}')
-        self.add_output(f'Config Dir: {config.config_dir}')
-        self.add_output(f'Token: {config.token[:4]}{"*" * 16}')
-        self.add_output(f'Max Sessions/IP: {config.max_sessions_per_ip}')
-        self.add_output('')
-        self.add_output('Run: darkcode config')
-        self.add_output('to edit configuration')
+        table = Table(show_header=False, box=None)
+        table.add_column("Key", style="cyan")
+        table.add_column("Value")
 
-    def _start_server(self, mode: str):
-        """Start the server with selected mode."""
-        self.add_output(f'Starting server in {mode} mode...')
-        self.add_output('')
-        self.running = False
-        self.app.exit(result=('start', mode))
+        table.add_row("Port", str(config.port))
+        table.add_row("Working Dir", str(config.working_dir))
+        table.add_row("Server Name", config.server_name)
+        table.add_row("Config Dir", str(config.config_dir))
+        table.add_row("Token", config.token[:4] + "*" * 16)
+        table.add_row("Max Sessions/IP", str(config.max_sessions_per_ip))
 
-    def _guest_create(self):
-        """Show guest create info."""
-        self.add_output('Run: darkcode guest create "Name"')
-        self.add_output('')
-        self.add_output('Options:')
-        self.add_output('  --expires 24     Hours until expiration')
-        self.add_output('  --max-uses 5     Maximum uses')
-        self.add_output('  --read-only      Read-only access')
+        console.print(table)
 
-    def _guest_list(self):
-        """List guest codes."""
-        try:
-            from darkcode_server.config import ServerConfig
-            from darkcode_server.security import GuestAccessManager
+        if Confirm.ask("\n[cyan]Edit configuration?[/]", default=False):
+            new_port = Prompt.ask("Port", default=str(config.port))
+            new_dir = Prompt.ask("Working directory", default=str(config.working_dir))
+            new_name = Prompt.ask("Server name", default=config.server_name)
 
-            config = ServerConfig.load()
-            guest_mgr = GuestAccessManager(config.config_dir / "guests.db")
-            codes = guest_mgr.list_codes()
+            from pathlib import Path
+            config.port = int(new_port)
+            config.working_dir = Path(new_dir)
+            config.server_name = new_name
+            config.save()
 
-            if not codes:
-                self.add_output('No guest codes found.')
-                self.add_output('')
-                self.add_output('Create one with:')
-                self.add_output('  darkcode guest create "Name"')
-            else:
-                for code in codes:
-                    status = 'active'
-                    if not code.get('is_active'):
-                        status = 'revoked'
-                    elif code.get('expired'):
-                        status = 'expired'
+            console.print("\n[green]Configuration saved![/]")
 
-                    self.add_output(f'{code["code"]} - {code["name"]} [{status}]')
-        except Exception as e:
-            self.add_output(f'[ERROR] {e}')
+        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        return True
 
-    def _security_status(self):
-        """Show security status."""
-        from darkcode_server.config import ServerConfig
+    elif action == "guest_create":
         config = ServerConfig.load()
+        from darkcode_server.security import GuestAccessManager
 
-        self.add_output(f'Device Lock: {"[OK] enabled" if config.device_lock else "disabled"}')
-        self.add_output(f'Bound Device: {config.bound_device_id[:12] + "..." if config.bound_device_id else "none"}')
-        self.add_output(f'TLS: {"[OK] enabled (wss://)" if config.tls_enabled else "disabled (ws://)"}')
-        self.add_output(f'mTLS: {"[OK] enabled" if config.mtls_enabled else "disabled"}')
-        self.add_output(f'Local Only: {"yes" if config.local_only else "no"}')
-        self.add_output(f'Rate Limit: {config.rate_limit_attempts} attempts / {config.rate_limit_window}s')
+        console.print("\n[bold green]Create Guest Code[/]\n")
 
-    def _toggle_tls(self):
-        """Toggle TLS setting."""
-        from darkcode_server.config import ServerConfig
+        name = Prompt.ask("Friend's name")
+        if not name:
+            return True
+
+        expires = Prompt.ask("Expires in hours (0=never)", default="24")
+        max_uses = Prompt.ask("Max uses (empty=unlimited)", default="")
+        read_only = Confirm.ask("Read-only access?", default=False)
+
+        guest_mgr = GuestAccessManager(config.config_dir / "guests.db")
+        result = guest_mgr.create_guest_code(
+            name=name,
+            permission_level="read_only" if read_only else "full",
+            expires_hours=int(expires) if expires != "0" else None,
+            max_uses=int(max_uses) if max_uses else None,
+        )
+
+        console.print(f"\n[green]Created![/] Code: [bold]{result['code']}[/]")
+        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        return True
+
+    elif action == "guest_list":
+        config = ServerConfig.load()
+        from darkcode_server.security import GuestAccessManager
+
+        guest_mgr = GuestAccessManager(config.config_dir / "guests.db")
+        codes = guest_mgr.list_codes()
+
+        console.print("\n[bold green]Guest Codes[/]\n")
+
+        if not codes:
+            console.print("[dim]No guest codes found.[/]")
+        else:
+            table = Table(show_header=True, box=None)
+            table.add_column("Code", style="bold cyan")
+            table.add_column("Name")
+            table.add_column("Status")
+
+            for code in codes:
+                status = "[green]active[/]"
+                if not code.get("is_active"):
+                    status = "[red]revoked[/]"
+                elif code.get("expired"):
+                    status = "[yellow]expired[/]"
+                table.add_row(code["code"], code["name"], status)
+
+            console.print(table)
+
+        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        return True
+
+    elif action == "guest_revoke":
+        config = ServerConfig.load()
+        from darkcode_server.security import GuestAccessManager
+
+        code = Prompt.ask("[cyan]Code to revoke[/]")
+        if not code:
+            return True
+
+        guest_mgr = GuestAccessManager(config.config_dir / "guests.db")
+        if guest_mgr.revoke_code(code):
+            console.print(f"[green]Revoked:[/] {code.upper()}")
+        else:
+            console.print(f"[red]Not found:[/] {code}")
+
+        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        return True
+
+    elif action == "guest_qr":
+        from darkcode_server.cli import guest_qr as show_guest_qr
+        from click.testing import CliRunner
+
+        code = Prompt.ask("[cyan]Code for QR[/]")
+        if not code:
+            return True
+
+        runner = CliRunner()
+        result = runner.invoke(show_guest_qr, [code], standalone_mode=False)
+        if result.output:
+            console.print(result.output)
+
+        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        return True
+
+    elif action == "security_tls":
         config = ServerConfig.load()
         config.tls_enabled = not config.tls_enabled
         config.save()
 
         if config.tls_enabled:
-            self.add_output('[OK] TLS enabled - Server will use wss://')
+            console.print("\n[green]TLS enabled - Server will use wss://[/]")
         else:
-            self.add_output('[WARN] TLS disabled - Server will use ws://')
+            console.print("\n[yellow]TLS disabled - Server will use ws://[/]")
 
-    def _toggle_mtls(self):
-        """Toggle mTLS setting."""
-        from darkcode_server.config import ServerConfig
+        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        return True
+
+    elif action == "security_mtls":
         config = ServerConfig.load()
         config.mtls_enabled = not config.mtls_enabled
         if config.mtls_enabled:
@@ -491,87 +362,126 @@ class SplitPaneTUI:
         config.save()
 
         if config.mtls_enabled:
-            self.add_output('[OK] mTLS enabled - Clients must present certificates')
+            console.print("\n[green]mTLS enabled - Clients must present certificates[/]")
         else:
-            self.add_output('mTLS disabled')
+            console.print("\n[dim]mTLS disabled[/]")
 
-    def _toggle_device_lock(self):
-        """Toggle device lock setting."""
-        from darkcode_server.config import ServerConfig
+        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        return True
+
+    elif action == "security_device_lock":
         config = ServerConfig.load()
         config.device_lock = not config.device_lock
         config.save()
 
         if config.device_lock:
-            self.add_output('[OK] Device lock enabled')
-            self.add_output('Server will lock to first connected device')
+            console.print("\n[green]Device lock enabled[/]")
         else:
-            self.add_output('Device lock disabled')
+            console.print("\n[yellow]Device lock disabled[/]")
 
-    def _reset_token(self):
-        """Reset auth token."""
-        import secrets
-        from darkcode_server.config import ServerConfig
+        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        return True
 
-        config = ServerConfig.load()
-        config.token = secrets.token_urlsafe(24)
-        config.save()
-
-        self.add_output('[OK] New token generated:')
-        self.add_output(f'  {config.token}')
-        self.add_output('')
-        self.add_output('[WARN] Current connections will be invalidated')
-
-    def _show_blocked(self):
-        """Show blocked IPs/devices."""
-        try:
-            from darkcode_server.config import ServerConfig
-            from darkcode_server.security import PersistentRateLimiter
-
+    elif action == "security_reset_token":
+        if Confirm.ask("\n[yellow]Generate new auth token? Current connections will be invalidated.[/]"):
+            import secrets
             config = ServerConfig.load()
-            db_path = config.config_dir / "security.db"
+            config.token = secrets.token_urlsafe(24)
+            config.save()
 
-            if not db_path.exists():
-                self.add_output('No security database yet.')
-                return
+            console.print(f"\n[green]New token:[/] {config.token}")
 
+        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        return True
+
+    elif action == "security_blocked":
+        config = ServerConfig.load()
+        from darkcode_server.security import PersistentRateLimiter
+
+        db_path = config.config_dir / "security.db"
+        if not db_path.exists():
+            console.print("\n[dim]No security database yet.[/]")
+        else:
             rate_limiter = PersistentRateLimiter(db_path)
             blocked = rate_limiter.get_blocked()
 
             if not blocked:
-                self.add_output('[OK] No blocked IPs or devices')
+                console.print("\n[green]No blocked IPs or devices[/]")
             else:
-                for b in blocked:
-                    self.add_output(f'{b["identifier"][:20]} ({b["identifier_type"]})')
-        except Exception as e:
-            self.add_output(f'[ERROR] {e}')
+                table = Table(title="Blocked")
+                table.add_column("Identifier", style="red")
+                table.add_column("Type")
 
-    def _unbind_device(self):
-        """Unbind current device."""
-        from darkcode_server.config import ServerConfig
+                for b in blocked:
+                    table.add_row(b["identifier"][:20], b["identifier_type"])
+
+                console.print(table)
+
+        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        return True
+
+    elif action == "security_unbind":
         config = ServerConfig.load()
 
         if not config.bound_device_id:
-            self.add_output('No device is currently bound.')
-            return
+            console.print("\n[yellow]No device is currently bound.[/]")
+        elif Confirm.ask("\n[yellow]Unbind current device?[/]"):
+            config.bound_device_id = None
+            config.save()
+            console.print("[green]Device unbound.[/]")
 
-        config.bound_device_id = None
-        config.save()
+        Prompt.ask("\n[dim]Press Enter to continue[/]")
+        return True
 
-        self.add_output('[OK] Device unbound')
-        self.add_output('Next device to authenticate will become bound device')
-
-    def run(self):
-        """Run the TUI application."""
-        return self.app.run()
+    return True
 
 
-def run_interactive_menu():
-    """Run the split-pane interactive menu.
+def run_interactive_menu() -> Optional[Tuple[str, Optional[str]]]:
+    """Run the interactive menu loop.
 
     Returns:
-        Tuple of (action, mode) or None if user quits.
+        Tuple of (action, mode) for actions that need to exit the menu,
+        or None if user quit.
     """
-    tui = SplitPaneTUI()
-    result = tui.run()
-    return result
+    while True:
+        clear_screen()
+        show_header()
+
+        action = show_main_menu()
+
+        if action is None:
+            return None
+
+        if action == "start":
+            clear_screen()
+            show_header()
+            mode = show_connection_menu()
+            if mode:
+                return ("start", mode)
+            continue
+
+        if action == "guest":
+            while True:
+                clear_screen()
+                show_header()
+                guest_action = show_guest_menu()
+                if guest_action is None:
+                    break
+                execute_action(guest_action)
+            continue
+
+        if action == "security":
+            while True:
+                clear_screen()
+                show_header()
+                sec_action = show_security_menu()
+                if sec_action is None:
+                    break
+                execute_action(sec_action)
+            continue
+
+        if action == "setup":
+            return ("setup", None)
+
+        # Execute other actions inline
+        execute_action(action)

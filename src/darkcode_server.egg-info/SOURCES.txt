@@ -5,6 +5,7 @@ src/darkcode_server/__init__.py
 src/darkcode_server/cli.py
 src/darkcode_server/config.py
 src/darkcode_server/daemon.py
+src/darkcode_server/prompt_ui.py
 src/darkcode_server/qrcode.py
 src/darkcode_server/security.py
 src/darkcode_server/server.py
