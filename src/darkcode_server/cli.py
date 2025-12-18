@@ -354,11 +354,48 @@ def menu_start_server():
         console.print(f"\n[red]Error: {e}[/]")
 
 
-async def _run_server(server: DarkCodeServer):
-    """Run the server until interrupted."""
+async def _run_server(server: DarkCodeServer, show_status: bool = True):
+    """Run the server until interrupted with live status display."""
+    import time
+    from datetime import timedelta
+
     await server.start()
+    start_time = time.time()
+
     try:
-        await asyncio.Future()  # Run forever
+        if show_status:
+            # Create a live status display that updates periodically
+            status_table = Table(show_header=False, box=None, padding=(0, 1))
+            status_table.add_column("", style="green", width=2)
+            status_table.add_column("", style="dim")
+
+            with Live(console=console, refresh_per_second=1, transient=False) as live:
+                while True:
+                    # Calculate uptime
+                    uptime_secs = int(time.time() - start_time)
+                    uptime = str(timedelta(seconds=uptime_secs))
+
+                    # Get session count from server
+                    session_count = len(server.sessions) if hasattr(server, 'sessions') else 0
+                    state = server.state.value if hasattr(server, 'state') else "running"
+
+                    # Build status display
+                    status_text = Text()
+                    status_text.append("● ", style="bold green")
+                    status_text.append("DARKCODE SERVER RUNNING", style="bold green")
+                    status_text.append(f"  │  ", style="dim")
+                    status_text.append(f"⏱ {uptime}", style="cyan")
+                    status_text.append(f"  │  ", style="dim")
+                    status_text.append(f"👥 {session_count} session{'s' if session_count != 1 else ''}", style="yellow")
+                    status_text.append(f"  │  ", style="dim")
+                    status_text.append(f"📡 {state}", style="magenta")
+                    status_text.append(f"  │  ", style="dim")
+                    status_text.append("Ctrl+C to stop", style="dim italic")
+
+                    live.update(status_text)
+                    await asyncio.sleep(1)
+        else:
+            await asyncio.Future()  # Run forever without status
     finally:
         await server.stop()
 
@@ -843,6 +880,12 @@ def start(port, token, working_dir, name, local_only, no_banner, save):
             ))
 
     console.print(f"\n[green]Server listening on {config.bind_host}:{config.port}[/]")
+
+    # Show admin URL
+    local_ips = config.get_local_ips()
+    local_ip = local_ips[0]["address"] if local_ips else "127.0.0.1"
+    protocol = "https" if config.tls_enabled else "http"
+    console.print(f"[cyan]Web Admin:[/] {protocol}://{local_ip}:{config.port}/admin")
     console.print("[dim]Press Ctrl+C to stop[/]\n")
 
     server = DarkCodeServer(config)

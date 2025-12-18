@@ -14,6 +14,7 @@ from pathlib import Path
 
 import websockets
 from websockets.server import WebSocketServerProtocol
+from websockets.http import Headers
 
 # Suppress noisy websockets handshake errors (TLS mismatch, etc.)
 logging.getLogger("websockets.server").setLevel(logging.ERROR)
@@ -191,6 +192,9 @@ class DarkCodeServer:
             self._bound_device_id = self.config.bound_device_id
             self._state = ServerState.LOCKED
 
+        # Web admin handler (lazy loaded)
+        self._web_admin = None
+
     def _generate_device_id(self, client_ip: str, user_agent: str = "", device_info: dict = None) -> str:
         """Generate a unique device fingerprint.
 
@@ -273,6 +277,62 @@ class DarkCodeServer:
                 self.config.save()
                 # Note: Old tokens valid for grace_hours
 
+    async def _process_request(self, connection, request):
+        """Process HTTP requests before WebSocket upgrade.
+
+        This allows serving the web admin dashboard on /admin while
+        still handling WebSocket connections on the same port.
+
+        Note: websockets 13+ passes (connection, request) instead of (path, headers)
+        """
+        # Extract path and headers from the request object
+        # Handle both old and new websockets API
+        if hasattr(request, 'path'):
+            path = request.path
+            request_headers = request.headers
+        else:
+            # Old API - request is actually path string
+            path = str(connection) if isinstance(connection, str) else getattr(connection, 'path', '/')
+            request_headers = request if hasattr(request, 'get') else {}
+
+        # Handle admin dashboard requests (non-WebSocket HTTP)
+        if isinstance(path, str) and path.startswith('/admin'):
+            # Initialize web admin handler if needed
+            if self._web_admin is None:
+                try:
+                    from darkcode_server.web_admin import WebAdminHandler
+                    self._web_admin = WebAdminHandler(self.config, self)
+                except ImportError:
+                    return (404, [], b"Web admin not available")
+
+            # Determine HTTP method and gather request info
+            method = 'GET'  # Default
+            # Note: POST detection is limited in websockets process_request
+            # We'll use a workaround with content-length header
+            content_length = request_headers.get('Content-Length', '0')
+            if int(content_length) > 0:
+                method = 'POST'
+
+            # Build headers dict
+            headers = {str(k): str(v) for k, v in request_headers.items()}
+
+            # For POST requests, we can't easily get body in process_request
+            # So we handle it via query params or redirect to GET
+            body = b''
+
+            # Handle the request
+            status, resp_headers, body = self._web_admin.handle_request(
+                path, method, headers, body
+            )
+
+            # Convert headers to list format
+            header_list = [(k, v) for k, v in resp_headers.items()]
+
+            return (status, header_list, body)
+
+        # For WebSocket paths, return None to continue with upgrade
+        return None
+
     async def start(self):
         """Start the WebSocket server."""
         self._running = True
@@ -309,6 +369,7 @@ class DarkCodeServer:
             ssl=ssl_context,
             ping_interval=self.config.ping_interval,
             ping_timeout=self.config.ping_timeout,
+            process_request=self._process_request,  # Handle HTTP admin requests
         )
 
         # Start idle monitor if timeout is configured
