@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import ssl
 import subprocess
 import time
@@ -13,6 +14,10 @@ from pathlib import Path
 
 import websockets
 from websockets.server import WebSocketServerProtocol
+
+# Suppress noisy websockets handshake errors (TLS mismatch, etc.)
+logging.getLogger("websockets.server").setLevel(logging.ERROR)
+logging.getLogger("websockets.protocol").setLevel(logging.ERROR)
 
 from darkcode_server.config import ServerConfig
 from darkcode_server.security import (
