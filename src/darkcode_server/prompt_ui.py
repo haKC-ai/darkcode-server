@@ -1,4 +1,4 @@
-"""Interactive menu using rich for clean, modern CLI experience."""
+"""Interactive menu using simple-term-menu for arrow key navigation."""
 
 import os
 import sys
@@ -6,7 +6,8 @@ from typing import Optional, Tuple
 
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
-from rich.prompt import Prompt, Confirm, IntPrompt
+from rich.prompt import Prompt, Confirm
+from simple_term_menu import TerminalMenu
 
 console = Console()
 
@@ -41,7 +42,7 @@ def fancy_progress(description: str, steps: int = 10):
 
 
 def show_menu(title: str, options: list, back_option: bool = False) -> Optional[str]:
-    """Show a menu and get selection.
+    """Show a menu with arrow key navigation.
 
     Args:
         title: Menu title
@@ -49,36 +50,34 @@ def show_menu(title: str, options: list, back_option: bool = False) -> Optional[
         back_option: Whether to show a back option
 
     Returns:
-        Selected value or None if back/quit
+        Selected value or None if back/quit/escape
     """
     console.print(f"\n[bold cyan]{title}[/]\n")
 
-    for key, value, desc in options:
-        console.print(f"  [bold cyan][{key}][/] {desc}")
-
+    # Build menu entries
+    entries = [f"[{key}] {desc}" for key, value, desc in options]
     if back_option:
-        console.print(f"  [bold cyan][b][/] Back")
+        entries.append("[b] Back")
 
-    console.print()
-
-    valid_keys = [o[0] for o in options]
-    if back_option:
-        valid_keys.append("b")
-
-    choice = Prompt.ask(
-        "[cyan]Select[/]",
-        choices=valid_keys,
-        default=options[0][0] if options else "b"
+    # Create terminal menu with styling
+    menu = TerminalMenu(
+        entries,
+        menu_cursor="▸ ",
+        menu_cursor_style=("fg_cyan", "bold"),
+        menu_highlight_style=("fg_green", "bold"),
+        cycle_cursor=True,
+        clear_screen=False,
     )
 
-    if choice == "b":
+    idx = menu.show()
+
+    if idx is None:
         return None
 
-    for key, value, desc in options:
-        if key == choice:
-            return value
+    if back_option and idx == len(options):
+        return None
 
-    return None
+    return options[idx][1] if idx < len(options) else None
 
 
 def show_main_menu() -> Optional[str]:
@@ -112,7 +111,7 @@ def show_connection_menu() -> Optional[str]:
     if tailscale_ip:
         options.append(("2", "tailscale", f"Tailscale ({tailscale_ip}) - Secure mesh VPN"))
     else:
-        options.append(("2", "tailscale_disabled", "Tailscale - [dim]Not detected[/]"))
+        options.append(("2", "tailscale_disabled", "Tailscale - Not detected"))
 
     options.append(("3", "ssh", "SSH Tunnel - Localhost only, most secure"))
 
