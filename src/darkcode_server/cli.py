@@ -381,15 +381,15 @@ async def _run_server(server: DarkCodeServer, show_status: bool = True):
 
                     # Build status display
                     status_text = Text()
-                    status_text.append("● ", style="bold green")
+                    status_text.append("[*] ", style="bold green")
                     status_text.append("DARKCODE SERVER RUNNING", style="bold green")
-                    status_text.append(f"  │  ", style="dim")
-                    status_text.append(f"⏱ {uptime}", style="cyan")
-                    status_text.append(f"  │  ", style="dim")
-                    status_text.append(f"👥 {session_count} session{'s' if session_count != 1 else ''}", style="yellow")
-                    status_text.append(f"  │  ", style="dim")
-                    status_text.append(f"📡 {state}", style="magenta")
-                    status_text.append(f"  │  ", style="dim")
+                    status_text.append("  |  ", style="dim")
+                    status_text.append(f"{uptime}", style="cyan")
+                    status_text.append("  |  ", style="dim")
+                    status_text.append(f"{session_count} session{'s' if session_count != 1 else ''}", style="yellow")
+                    status_text.append("  |  ", style="dim")
+                    status_text.append(f"{state}", style="magenta")
+                    status_text.append("  |  ", style="dim")
                     status_text.append("Ctrl+C to stop", style="dim italic")
 
                     live.update(status_text)

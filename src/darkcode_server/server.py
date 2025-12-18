@@ -316,6 +316,9 @@ class DarkCodeServer:
 
         # Handle admin dashboard requests (non-WebSocket HTTP)
         if isinstance(path, str) and path.startswith('/admin'):
+            # Debug: print the full path to terminal
+            print(f"[DEBUG] Admin request path: {path!r}")
+
             # Initialize web admin handler if needed
             if self._web_admin is None:
                 try:
@@ -340,9 +343,11 @@ class DarkCodeServer:
             body = b''
 
             # Handle the request
+            print(f"[DEBUG] Calling handle_request with path={path!r}, method={method}")
             status, resp_headers, resp_body = self._web_admin.handle_request(
                 path, method, headers, body
             )
+            print(f"[DEBUG] Response: status={status}, headers={resp_headers}")
 
             # Build Response object for websockets 13+
             # Get status phrase
@@ -354,6 +359,7 @@ class DarkCodeServer:
 
             # Convert headers to Headers object
             header_list = [(k, v) for k, v in resp_headers.items()]
+            print(f"[DEBUG] Header list: {header_list}")
             response_headers = Headers(header_list)
 
             return Response(status, reason, response_headers, resp_body)

@@ -328,8 +328,8 @@ LOGIN_CONTENT = """
         <h1 style="color: var(--accent);">Admin Login</h1>
     </div>
     {error}
-    <form id="loginForm" onsubmit="return handleLogin(event)">
-        <input type="text" id="pinInput" name="pin" placeholder="000000" maxlength="6" pattern="[0-9]{{6}}" autofocus inputmode="numeric">
+    <form id="loginForm" method="GET" action="/admin/login">
+        <input type="text" id="pinInput" name="pin" placeholder="000000" maxlength="6" pattern="[0-9]{{6}}" autofocus autocomplete="off">
         <button type="submit">Login</button>
     </form>
     <p style="text-align: center; margin-top: 20px; color: var(--text-dim); font-size: 12px;">
@@ -337,15 +337,7 @@ LOGIN_CONTENT = """
     </p>
 </div>
 <script>
-function handleLogin(e) {{
-    e.preventDefault();
-    const pin = document.getElementById('pinInput').value;
-    if (pin && pin.length === 6) {{
-        window.location.href = '/admin/login?pin=' + encodeURIComponent(pin);
-    }}
-    return false;
-}}
-// Auto-focus and select
+// Auto-focus
 document.getElementById('pinInput').focus();
 </script>
 """
@@ -491,10 +483,10 @@ class WebAdminHandler:
 
     def _verify_pin(self, pin: str) -> bool:
         """Verify the provided PIN matches the web PIN."""
-        import hmac
         if WebAdminHandler._web_pin is None:
             return False
-        return hmac.compare_digest(pin.strip(), WebAdminHandler._web_pin)
+        # Simple string comparison - strip whitespace from input
+        return pin.strip() == WebAdminHandler._web_pin
 
     def _parse_cookies(self, cookie_header: str) -> dict:
         """Parse cookies from header."""
@@ -547,10 +539,15 @@ class WebAdminHandler:
                 form_data = self._parse_form_data(body)
                 pin = form_data.get('pin', '')
 
+            # Debug logging
+            import logging
+            logging.info(f"Login attempt - PIN provided: '{pin}', Expected: '{WebAdminHandler._web_pin}'")
+
             if pin:
                 if self._verify_pin(pin):
                     session_cookie = self._generate_session_cookie()
                     WebAdminHandler._authenticated_sessions.add(session_cookie)
+                    logging.info(f"Login successful, setting cookie: {session_cookie[:8]}...")
                     return (
                         302,
                         {
@@ -560,6 +557,7 @@ class WebAdminHandler:
                         b''
                     )
                 else:
+                    logging.warning(f"Login failed - PIN mismatch")
                     return self._login_page(error="Invalid PIN")
             else:
                 # Show login page
