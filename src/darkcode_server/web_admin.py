@@ -315,10 +315,6 @@ ADMIN_HTML = """<!DOCTYPE html>
     <div class="container">
         {content}
     </div>
-    <script>
-        // Auto-refresh every 5 seconds
-        setTimeout(() => location.reload(), 5000);
-    </script>
 </body>
 </html>
 """
@@ -439,6 +435,8 @@ DASHBOARD_CONTENT = """
             alert('Token copied to clipboard');
         }});
     }}
+    // Auto-refresh dashboard every 5 seconds
+    setTimeout(() => location.reload(), 5000);
 </script>
 """
 
