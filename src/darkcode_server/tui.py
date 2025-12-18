@@ -104,7 +104,10 @@ class SystemCheck:
         """Check if working directory exists and is accessible."""
         if config.working_dir.exists():
             if config.working_dir.is_dir():
-                return True, str(config.working_dir)[:30] + "..."
+                path_str = str(config.working_dir)
+                if len(path_str) > 35:
+                    path_str = "..." + path_str[-32:]
+                return True, path_str
             return False, "Not a directory"
         return False, "Not found"
 
@@ -119,147 +122,101 @@ class SystemCheck:
         return self.results
 
 
+# Custom banner from file
+BANNER_ART = """
+         .:::::::--------.                                                        .--------.
+         :@@@@@@@+%@@@@@@@#.         .*%%%%%*.#%%%%%%%%%%%%%%%%%%%*@@@@@+       .@@@@@@@@*.
+         :@@@@@@@+ .+@@@@@@@#:     -%@@@@@@@#.%@@@@@@@@@@@@@@@@@@@#@@@@@+    .-%@@@@@@@+.
+         .-------:    .--------:.-------:----.------.........-----------:  .--------:.
+         :@@@@@@@+     .=@@@@@@@@@@@@@:.*@@@#.%@@@@%.*@@@@@@@@@@@@#@@@@@+ =@@@@@@@@:.
+         :@@@@@@@+       .#@@@@@@@@*.   *@@@#.%@@@@%.*@@@@@@@@@@@@#@@@@@*%@@@@@@@#.
+         :@@@@@@@+     .*@@@@@@@@=......#@@@#.%@@@@%..=%@@@@@*:   =@@@@@+ :%@@@@@@@+.
+         :@@@@@@@+   .#@@@@@@@@:.  .*@@@@@@@#.%@@@@%.  ..=@@@@@@+ =@@@@@+  .:%@@@@@@@*.
+         :@@@@@@@+ :#@@@@@@@*:       .+*****=.+****+.     .:+*****#@@@@%-     :#@@@@@@@*.
+         :@@@@@@@*%@@@@@@@*.                                      =@@+.         .%@@@@@@@#.
+         :@@@@@@+::::::::::::..:::::::::::::::::::.::::::::::::::::::...:::::::::::::::::::.
+         -@@@#+=============--===================:====================:==================:.
+       .-+*==-             .=====:.       .=====:=====.       .:====-======:::::::::::::
+      .*%%%%+.            :%%%%%:        -%%%%%=%%%%*.       .*%%%%+#%%%%%%%%%%%%%%%%%#.
+     .#@@@@=             :@@@@@:.       =@@@@#*@@@@#.       .#@@@@+@@@@@=
+    .%@@@@@@@@@@@@@@@@@@*@@@@@@@@@@@@@@@@@@@#*@@@@@@@@@@@@@@@@@@@-@@@@@@@@@@@@@@@@@@#.
+   :#%%%%%%%%%%%%%%%%%#-%%%%%%%%%%%%%%%%%%%=*%%%%%%%%%%%%%%%%*=::%%%%%%%%%%%%%%%%%%+.
+"""
+
+
 class DarkCodeTUI:
     """Main TUI application using pyTermTk."""
-
-    # ASCII art banner
-    BANNER = """
-██████╗  █████╗ ██████╗ ██╗  ██╗ ██████╗ ██████╗ ██████╗ ███████╗
-██╔══██╗██╔══██╗██╔══██╗██║ ██╔╝██╔════╝██╔═══██╗██╔══██╗██╔════╝
-██║  ██║███████║██████╔╝█████╔╝ ██║     ██║   ██║██║  ██║█████╗
-██║  ██║██╔══██║██╔══██╗██╔═██╗ ██║     ██║   ██║██║  ██║██╔══╝
-██████╔╝██║  ██║██║  ██║██║  ██╗╚██████╗╚██████╔╝██████╔╝███████╗
-╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
-"""
 
     def __init__(self, config: Optional[ServerConfig] = None):
         self.config = config or ServerConfig.load()
         self.system_check = SystemCheck()
         self.result = None
         self.root = None
-        self._selected_index = 0
-        self._menu_items = []
 
-    def _get_banner_colored(self) -> ttk.TTkString:
-        """Get the banner with gradient colors."""
-        lines = self.BANNER.strip().split('\n')
-        colored_lines = []
-
-        # Purple to cyan gradient
-        colors = [
-            ttk.TTkColor.fg('#ff00ff'),  # Magenta
-            ttk.TTkColor.fg('#dd00ff'),
-            ttk.TTkColor.fg('#bb00ff'),
-            ttk.TTkColor.fg('#9900ff'),  # Purple
-            ttk.TTkColor.fg('#7700ff'),
-            ttk.TTkColor.fg('#5500ff'),
-        ]
-
-        for i, line in enumerate(lines):
-            color = colors[min(i, len(colors) - 1)]
-            colored_lines.append(ttk.TTkString(line, color))
-
-        return ttk.TTkString('\n').join(colored_lines)
-
-    def _create_status_frame(self) -> ttk.TTkFrame:
-        """Create the system status frame."""
-        checks = self.system_check.run_all(self.config)
-
-        frame = ttk.TTkFrame(
-            title=" System Status ",
-            border=True,
-            size=(50, len(checks) + 2)
-        )
-
-        layout = ttk.TTkVBoxLayout()
-        frame.setLayout(layout)
-
-        for name, (ok, msg) in checks.items():
-            icon = "✓" if ok else "✗"
-            color = ttk.TTkColor.fg('#00ff00') if ok else ttk.TTkColor.fg('#ff0000')
-            text = ttk.TTkString(f" {icon} ", color) + ttk.TTkString(f"{name}: ") + ttk.TTkString(msg, ttk.TTkColor.fg('#888888'))
-            label = ttk.TTkLabel(text=text)
-            layout.addWidget(label)
-
-        return frame
-
-    def _create_menu_frame(self) -> ttk.TTkFrame:
-        """Create the main menu frame with selectable items."""
+        # Menu items: (key, title, description, mode/action)
         self._menu_items = [
-            ("start", "Start Server", "Launch the WebSocket server", "direct"),
-            ("start_ts", "Start (Tailscale)", "Start with Tailscale mode", "tailscale"),
-            ("start_ssh", "Start (SSH Tunnel)", "Localhost only, most secure", "ssh"),
-            ("status", "Server Status", "Check if server is running", None),
-            ("qr", "Show QR Code", "Display connection QR code", None),
-            ("guest", "Guest Codes", "Create/manage friend access codes", None),
-            ("config", "Configuration", "View/edit server settings", None),
-            ("security", "Security", "TLS, tokens, blocked IPs", None),
-            ("setup", "Setup Wizard", "Re-run initial setup", None),
-            ("quit", "Quit", "Exit the application", None),
+            ("start_direct", "Start Server (Direct LAN)", "direct"),
+            ("start_tailscale", "Start Server (Tailscale)", "tailscale"),
+            ("start_ssh", "Start Server (SSH Tunnel)", "ssh"),
+            ("status", "Server Status", None),
+            ("qr", "Show QR Code", None),
+            ("guest", "Guest Codes", None),
+            ("config", "Configuration", None),
+            ("security", "Security Settings", None),
+            ("setup", "Setup Wizard", None),
+            ("quit", "Quit", None),
         ]
 
-        frame = ttk.TTkFrame(
-            title=" Menu ",
-            border=True,
-            size=(50, len(self._menu_items) + 3)
-        )
+    def _get_banner_colored(self) -> str:
+        """Get the banner with gradient colors."""
+        # Try to load from file first
+        banner_paths = [
+            Path("/Users/0xdeadbeef/Desktop/tui_banner.txt"),
+            Path.home() / ".darkcode" / "tui_banner.txt",
+        ]
 
-        layout = ttk.TTkVBoxLayout()
-        frame.setLayout(layout)
+        banner_text = BANNER_ART
+        for path in banner_paths:
+            if path.exists():
+                try:
+                    banner_text = path.read_text()
+                    break
+                except Exception:
+                    pass
 
-        # Instructions
-        hint = ttk.TTkLabel(text=ttk.TTkString(" ↑↓ Navigate  Enter Select  q Quit", ttk.TTkColor.fg('#666666')))
-        layout.addWidget(hint)
+        return banner_text.strip()
 
-        # Menu list widget
-        self._list_widget = ttk.TTkList(size=(48, len(self._menu_items)))
+    def _handle_menu_click(self, text):
+        """Handle menu item click."""
+        text_str = str(text).strip()
 
-        for key, title, desc, _ in self._menu_items:
-            text = f"  {title}"
-            self._list_widget.addItem(ttk.TTkString(text))
-
-        # Select first item
-        self._list_widget.setCurrentRow(0)
-
-        # Connect selection signal
-        self._list_widget.itemClicked.connect(self._on_item_clicked)
-
-        layout.addWidget(self._list_widget)
-
-        return frame
-
-    def _on_item_clicked(self, item):
-        """Handle menu item selection."""
-        idx = self._list_widget.currentRow()
-        if 0 <= idx < len(self._menu_items):
-            key, _, _, mode = self._menu_items[idx]
-            self._handle_selection(key, mode)
-
-    def _handle_selection(self, key: str, mode: Optional[str]):
-        """Handle a menu selection."""
-        if key == "quit":
-            self.root.quit()
-        elif key.startswith("start"):
-            self.result = ("start", mode or "direct")
-            self.root.quit()
-        elif key == "status":
-            self.result = ("status", None)
-            self.root.quit()
-        elif key == "qr":
-            self.result = ("qr", None)
-            self.root.quit()
-        elif key == "guest":
-            self.result = ("guest", None)
-            self.root.quit()
-        elif key == "config":
-            self.result = ("config", None)
-            self.root.quit()
-        elif key == "security":
-            self.result = ("security", None)
-            self.root.quit()
-        elif key == "setup":
-            self.result = ("setup", None)
-            self.root.quit()
+        # Find matching menu item
+        for key, title, mode in self._menu_items:
+            if title in text_str or text_str in title:
+                if key == "quit":
+                    self.root.quit()
+                elif key.startswith("start_"):
+                    self.result = ("start", mode)
+                    self.root.quit()
+                elif key == "status":
+                    self.result = ("status", None)
+                    self.root.quit()
+                elif key == "qr":
+                    self.result = ("qr", None)
+                    self.root.quit()
+                elif key == "guest":
+                    self.result = ("guest", None)
+                    self.root.quit()
+                elif key == "config":
+                    self.result = ("config", None)
+                    self.root.quit()
+                elif key == "security":
+                    self.result = ("security", None)
+                    self.root.quit()
+                elif key == "setup":
+                    self.result = ("setup", None)
+                    self.root.quit()
+                break
 
     def run(self) -> Optional[tuple]:
         """Run the TUI application."""
@@ -274,66 +231,123 @@ class DarkCodeTUI:
                 )
             )
 
-            # Create main layout
-            main_layout = ttk.TTkGridLayout()
-            self.root.setLayout(main_layout)
+            # Set up root layout
+            root_layout = ttk.TTkGridLayout()
+            self.root.setLayout(root_layout)
 
-            # Create a main window/frame
+            # Create main frame
             main_frame = ttk.TTkFrame(border=False)
-            main_frame_layout = ttk.TTkVBoxLayout()
-            main_frame.setLayout(main_frame_layout)
+            main_layout = ttk.TTkVBoxLayout()
+            main_frame.setLayout(main_layout)
+            root_layout.addWidget(main_frame, 0, 0)
 
-            # Banner
-            banner_label = ttk.TTkLabel(text=self._get_banner_colored())
-            main_frame_layout.addWidget(banner_label)
+            # === BANNER ===
+            banner_text = self._get_banner_colored()
+            banner_lines = banner_text.split('\n')
 
-            # Version
-            version_text = ttk.TTkString(f"                           v{__version__}", ttk.TTkColor.fg('#666666'))
-            version_label = ttk.TTkLabel(text=version_text)
-            main_frame_layout.addWidget(version_label)
+            # Color gradient for banner (magenta -> purple -> blue)
+            colors = [
+                ttk.TTkColor.fg('#ff00ff'),  # Magenta
+                ttk.TTkColor.fg('#ee00ff'),
+                ttk.TTkColor.fg('#dd00ff'),
+                ttk.TTkColor.fg('#cc00ff'),
+                ttk.TTkColor.fg('#bb00ff'),
+                ttk.TTkColor.fg('#aa00ff'),
+                ttk.TTkColor.fg('#9900ff'),
+                ttk.TTkColor.fg('#8800ff'),
+                ttk.TTkColor.fg('#7700ff'),
+                ttk.TTkColor.fg('#6600ff'),
+                ttk.TTkColor.fg('#5500ff'),
+                ttk.TTkColor.fg('#4400ff'),
+                ttk.TTkColor.fg('#3300ff'),
+                ttk.TTkColor.fg('#2200ff'),
+                ttk.TTkColor.fg('#1100ff'),
+                ttk.TTkColor.fg('#0000ff'),
+                ttk.TTkColor.fg('#0011ff'),
+            ]
+
+            for i, line in enumerate(banner_lines[:18]):  # Limit banner height
+                color = colors[min(i, len(colors) - 1)]
+                label = ttk.TTkLabel(text=ttk.TTkString(line, color), maxHeight=1)
+                main_layout.addWidget(label)
+
+            # Version label
+            version_label = ttk.TTkLabel(
+                text=ttk.TTkString(f"  v{__version__}", ttk.TTkColor.fg('#888888')),
+                maxHeight=1
+            )
+            main_layout.addWidget(version_label)
 
             # Spacer
-            main_frame_layout.addWidget(ttk.TTkSpacer())
+            main_layout.addWidget(ttk.TTkSpacer())
 
-            # Horizontal layout for status and menu
-            h_layout = ttk.TTkHBoxLayout()
+            # === CONTENT AREA (Status + Menu side by side) ===
+            content_layout = ttk.TTkHBoxLayout()
+            content_frame = ttk.TTkFrame(border=False, maxHeight=16)
+            content_frame.setLayout(content_layout)
+            main_layout.addWidget(content_frame)
 
-            # Status frame
-            status_frame = self._create_status_frame()
-            h_layout.addWidget(status_frame)
+            # --- System Status Panel ---
+            checks = self.system_check.run_all(self.config)
 
-            # Spacer between
-            h_layout.addWidget(ttk.TTkSpacer())
+            status_frame = ttk.TTkFrame(title="System Status", border=True, maxWidth=55)
+            status_layout = ttk.TTkVBoxLayout()
+            status_frame.setLayout(status_layout)
 
-            # Menu frame
-            menu_frame = self._create_menu_frame()
-            h_layout.addWidget(menu_frame)
+            for name, (ok, msg) in checks.items():
+                icon = "✓" if ok else "✗"
+                color = ttk.TTkColor.fg('#00ff00') if ok else ttk.TTkColor.fg('#ff4444')
+                dim = ttk.TTkColor.fg('#888888')
+                text = ttk.TTkString(f" {icon} ", color) + ttk.TTkString(f"{name}: ", ttk.TTkColor.RST) + ttk.TTkString(msg, dim)
+                status_layout.addWidget(ttk.TTkLabel(text=text, maxHeight=1))
 
-            h_layout.addWidget(ttk.TTkSpacer())
+            status_layout.addWidget(ttk.TTkSpacer())
+            content_layout.addWidget(status_frame)
 
-            container = ttk.TTkFrame(border=False)
-            container.setLayout(h_layout)
-            main_frame_layout.addWidget(container)
+            # Spacer between panels
+            content_layout.addWidget(ttk.TTkSpacer())
 
-            # Footer
-            main_frame_layout.addWidget(ttk.TTkSpacer())
-            footer = ttk.TTkLabel(text=ttk.TTkString(" DarkCode Server - Remote Claude Code from your phone ", ttk.TTkColor.fg('#555555')))
-            main_frame_layout.addWidget(footer)
+            # --- Menu Panel ---
+            menu_frame = ttk.TTkFrame(title="Menu", border=True, maxWidth=45)
+            menu_layout = ttk.TTkVBoxLayout()
+            menu_frame.setLayout(menu_layout)
 
-            main_layout.addWidget(main_frame, 0, 0)
+            # Instructions
+            hint_text = ttk.TTkString(" ↑↓ Navigate  Enter Select  q Quit", ttk.TTkColor.fg('#666666'))
+            menu_layout.addWidget(ttk.TTkLabel(text=hint_text, maxHeight=1))
 
-            # Handle keyboard shortcuts
+            # Menu list
+            menu_list = ttk.TTkList(minHeight=10)
+
+            for key, title, mode in self._menu_items:
+                menu_list.addItem(f"  {title}")
+
+            # Connect signal
+            @ttk.pyTTkSlot(str)
+            def _menu_clicked(text):
+                self._handle_menu_click(text)
+
+            menu_list.textClicked.connect(_menu_clicked)
+            menu_layout.addWidget(menu_list)
+
+            content_layout.addWidget(menu_frame)
+            content_layout.addWidget(ttk.TTkSpacer())
+
+            # === FOOTER ===
+            main_layout.addWidget(ttk.TTkSpacer())
+            footer = ttk.TTkLabel(
+                text=ttk.TTkString(" DarkCode Server - Remote Claude Code from your phone  |  Press 'q' to quit", ttk.TTkColor.fg('#555555')),
+                maxHeight=1
+            )
+            main_layout.addWidget(footer)
+
+            # Global key handler for quit
             @ttk.pyTTkSlot(ttk.TTkKeyEvent)
-            def _key_handler(evt):
+            def _global_key_handler(evt):
                 if evt.key == ttk.TTkK.Key_Q or evt.key == ttk.TTkK.Key_Escape:
                     self.root.quit()
-                elif evt.key == ttk.TTkK.Key_Enter or evt.key == ttk.TTkK.Key_Return:
-                    idx = self._list_widget.currentRow()
-                    if 0 <= idx < len(self._menu_items):
-                        key, _, _, mode = self._menu_items[idx]
-                        self._handle_selection(key, mode)
-
-            self.root.keyEvent = _key_handler
+                    return True
+                return False
 
             # Run the application
             self.root.mainloop()
