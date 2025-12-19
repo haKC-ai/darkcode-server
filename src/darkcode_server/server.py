@@ -227,27 +227,29 @@ def get_claude_version() -> str:
     return "unknown"
 
 
-def list_claude_sessions(working_dir: Path) -> list[dict]:
-    """List all available Claude Code sessions across all projects.
+def list_claude_sessions(working_dir: Path, limit: int = 50) -> list[dict]:
+    """List available Claude Code sessions across all projects.
 
-    Scans all project directories in ~/.claude/projects/ to find sessions.
+    Scans project directories in ~/.claude/projects/ to find sessions.
     Returns sessions sorted by last modified time (most recent first).
+    Limited to most recent sessions for performance.
+
+    Args:
+        working_dir: The working directory (used for context)
+        limit: Maximum number of sessions to return (default 50)
     """
     claude_dir = Path.home() / ".claude" / "projects"
     if not claude_dir.exists():
         return []
 
-    sessions = []
+    # First, collect all session files with their mod times (fast - just stat)
+    session_files = []
 
-    # Scan ALL project directories, not just the working_dir one
     for project_dir in claude_dir.iterdir():
         if not project_dir.is_dir():
             continue
 
-        # The directory name is the encoded path (e.g., -Users-0xdeadbeef-hakc-dev)
         encoded_path = project_dir.name
-
-        # Decode to actual filesystem path for cd'ing into
         actual_path = _decode_claude_project_path(encoded_path)
 
         for session_file in project_dir.glob("*.jsonl"):
@@ -255,74 +257,73 @@ def list_claude_sessions(working_dir: Path) -> list[dict]:
             if session_file.stem.startswith("agent-"):
                 continue
 
-            # Skip empty files
             try:
                 stat = session_file.stat()
                 if stat.st_size == 0:
                     continue
+                session_files.append((session_file, stat, project_dir, actual_path))
             except (IOError, OSError):
                 continue
 
-            try:
-                # Try to find actual user text for preview
-                preview = ""
-                session_id = session_file.stem
+    # Sort by modification time (newest first) and take only the limit
+    session_files.sort(key=lambda x: x[1].st_mtime, reverse=True)
+    session_files = session_files[:limit]
 
-                # Check if there's a subdirectory with same name (active session)
-                has_subdir = (project_dir / session_id).is_dir()
+    sessions = []
 
-                # Scan through lines to find real user messages (not IDE context)
-                with open(session_file, "r") as f:
-                    lines_checked = 0
-                    for line in f:
-                        lines_checked += 1
-                        if lines_checked > 100:  # Don't scan forever
-                            break
-                        try:
-                            data = json.loads(line)
-                            if data.get("type") == "user":
-                                msg = data.get("message", {})
-                                content = msg.get("content", [])
-                                if isinstance(content, list) and content:
-                                    for block in content:
-                                        if isinstance(block, dict) and block.get("type") == "text":
-                                            text = block.get("text", "").strip()
-                                            # Skip IDE/system messages that start with <
-                                            if not text.startswith("<") and len(text) > 5:
-                                                # Clean up: take first line, truncate
-                                                first_line = text.split("\n")[0][:120]
-                                                preview = first_line
-                                                break
-                                if preview:
-                                    break
-                        except json.JSONDecodeError:
-                            continue
+    for session_file, stat, project_dir, actual_path in session_files:
+        try:
+            preview = ""
+            message_count = 0
+            session_id = session_file.stem
 
-                # Count messages for sync detection
-                message_count = 0
-                try:
-                    with open(session_file, "r") as f:
-                        for line in f:
-                            try:
-                                data = json.loads(line)
-                                if data.get("type") in ("user", "assistant"):
-                                    message_count += 1
-                            except json.JSONDecodeError:
-                                continue
-                except (IOError, OSError):
-                    pass
+            # Check if there's a subdirectory with same name (active session)
+            has_subdir = (project_dir / session_id).is_dir()
 
-                sessions.append({
-                    "sessionId": session_id,
-                    "lastModified": int(stat.st_mtime * 1000),
-                    "size": stat.st_size,
-                    "preview": preview,
-                    "isActive": has_subdir,
-                    "projectPath": actual_path,
-                    "messageCount": message_count,  # For Whisper Sync
-                })
-            except (IOError, OSError):
-                continue
+            # Single pass through file: find preview and count messages
+            with open(session_file, "r") as f:
+                lines_checked = 0
+                for line in f:
+                    lines_checked += 1
+                    # Limit lines scanned for preview, but count all messages
+                    if lines_checked > 200:
+                        # After 200 lines, just count without parsing
+                        message_count += line.count('"type": "user"') + line.count('"type": "assistant"')
+                        continue
+
+                    try:
+                        data = json.loads(line)
+                        msg_type = data.get("type")
+
+                        # Count user/assistant messages
+                        if msg_type in ("user", "assistant"):
+                            message_count += 1
+
+                        # Find preview (first real user message)
+                        if not preview and msg_type == "user":
+                            msg = data.get("message", {})
+                            content = msg.get("content", [])
+                            if isinstance(content, list) and content:
+                                for block in content:
+                                    if isinstance(block, dict) and block.get("type") == "text":
+                                        text = block.get("text", "").strip()
+                                        if not text.startswith("<") and len(text) > 5:
+                                            preview = text.split("\n")[0][:120]
+                                            break
+                    except json.JSONDecodeError:
+                        continue
+
+            sessions.append({
+                "sessionId": session_id,
+                "lastModified": int(stat.st_mtime * 1000),
+                "size": stat.st_size,
+                "preview": preview,
+                "isActive": has_subdir,
+                "projectPath": actual_path,
+                "messageCount": message_count,  # For Whisper Sync
+            })
+        except (IOError, OSError):
+            continue
 
     # Sort: active sessions first, then by last modified (most recent first)
     sessions.sort(key=lambda x: (not x["isActive"], -x["lastModified"]))
@@ -883,8 +884,12 @@ class DarkCodeServer:
             resume_session_id: Optional Claude session ID to resume (for handoffs)
         """
         try:
-            # Use validated working directory
-            working_dir = self.config.safe_working_dir
+            # Use session's working directory if set (e.g., when resuming a session),
+            # otherwise fall back to config's validated working directory
+            if session.working_dir and session.working_dir.exists():
+                working_dir = session.working_dir
+            else:
+                working_dir = self.config.safe_working_dir
 
             # Build command with streaming and permission handling
             cmd = [
