@@ -320,9 +320,6 @@ class DarkCodeServer:
 
         # Handle admin dashboard requests (non-WebSocket HTTP)
         if isinstance(path, str) and path.startswith('/admin'):
-            # Debug: print the full path to terminal
-            print(f"[DEBUG] Admin request path: {path!r}")
-
             # Initialize web admin handler if needed
             if self._web_admin is None:
                 try:
@@ -331,10 +328,8 @@ class DarkCodeServer:
                 except ImportError:
                     return Response(404, "Not Found", Headers([]), b"Web admin not available")
 
-            # Determine HTTP method and gather request info
-            method = 'GET'  # Default
-            # Note: POST detection is limited in websockets process_request
-            # We'll use a workaround with content-length header
+            # Determine HTTP method
+            method = 'GET'
             content_length = request_headers.get('Content-Length', '0')
             if int(content_length) > 0:
                 method = 'POST'
@@ -342,31 +337,20 @@ class DarkCodeServer:
             # Build headers dict
             headers = {str(k): str(v) for k, v in request_headers.items()}
 
-            # For POST requests, we can't easily get body in process_request
-            # So we handle it via query params or redirect to GET
-            body = b''
-
             # Handle the request
-            print(f"[DEBUG] Calling handle_request with path={path!r}, method={method}")
             status, resp_headers, resp_body = self._web_admin.handle_request(
-                path, method, headers, body
+                path, method, headers, b''
             )
-            print(f"[DEBUG] Response: status={status}, headers={resp_headers}")
 
             # Build Response object for websockets 13+
-            # Get status phrase
             from http import HTTPStatus
             try:
                 reason = HTTPStatus(status).phrase
             except ValueError:
                 reason = "Unknown"
 
-            # Convert headers to Headers object
             header_list = [(k, v) for k, v in resp_headers.items()]
-            print(f"[DEBUG] Header list: {header_list}")
-            response_headers = Headers(header_list)
-
-            return Response(status, reason, response_headers, resp_body)
+            return Response(status, reason, Headers(header_list), resp_body)
 
         # Check if this is a WebSocket upgrade request
         # If not, return a friendly HTTP response instead of letting websockets raise InvalidUpgrade

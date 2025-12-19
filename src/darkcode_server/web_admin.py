@@ -527,30 +527,17 @@ class WebAdminHandler:
         clean_path = parsed.path
         query_params = parse_qs(parsed.query)
 
-        # Debug: log cookie handling
-        import logging
-        logging.info(f"[WebAdmin] Path: {clean_path}, Cookies received: {list(cookies.keys())}")
-        logging.info(f"[WebAdmin] Session ID from cookie: {cookies.get('darkcode_admin_session', 'NONE')[:16] if cookies.get('darkcode_admin_session') else 'NONE'}...")
-        logging.info(f"[WebAdmin] Known sessions: {[s[:8] for s in WebAdminHandler._authenticated_sessions]}")
-
         # Route requests
         if clean_path == '/admin' or clean_path == '/admin/':
             # Check for session token in query params (from login redirect)
             session_from_url = query_params.get('session', [None])[0]
             if session_from_url and session_from_url in WebAdminHandler._authenticated_sessions:
-                print(f"[WebAdmin] Auth via URL session token: {session_from_url[:8]}...")
-                # Return dashboard with session token embedded for JS to store
                 return self._dashboard_page(session_token=session_from_url)
 
             # Check for session in cookie
-            is_auth = self._is_authenticated(cookies)
-            print(f"[WebAdmin] Auth check: is_auth={is_auth}, cookie={cookies.get('darkcode_admin_session', 'NONE')[:16] if cookies.get('darkcode_admin_session') else 'NONE'}...")
-            print(f"[WebAdmin] Known sessions: {[s[:8]+'...' for s in WebAdminHandler._authenticated_sessions]}")
-            if is_auth:
-                print("[WebAdmin] Returning DASHBOARD page")
+            if self._is_authenticated(cookies):
                 return self._dashboard_page()
             else:
-                print("[WebAdmin] Returning LOGIN page")
                 return self._login_page()
 
         elif clean_path == '/admin/logo':
@@ -566,16 +553,11 @@ class WebAdminHandler:
                 form_data = self._parse_form_data(body)
                 pin = form_data.get('pin', '')
 
-            # Debug logging
-            import logging
-            logging.info(f"Login attempt - PIN provided: '{pin}', Expected: '{WebAdminHandler._web_pin}'")
-
             if pin:
                 if self._verify_pin(pin):
                     session_cookie = self._generate_session_cookie()
                     WebAdminHandler._authenticated_sessions.add(session_cookie)
-                    logging.info(f"Login successful, session: {session_cookie[:8]}...")
-                    # Redirect with session token in URL - cookie approach doesn't work with websockets HTTP
+                    # Redirect with session token in URL
                     return (
                         302,
                         {
@@ -585,10 +567,8 @@ class WebAdminHandler:
                         b''
                     )
                 else:
-                    logging.warning(f"Login failed - PIN mismatch")
                     return self._login_page(error="Invalid PIN")
             else:
-                # Show login page
                 return self._login_page()
 
         elif clean_path == '/admin/logout':
