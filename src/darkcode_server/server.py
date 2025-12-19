@@ -138,9 +138,78 @@ class Session:
     permission_level: str = "full"  # "full" or "read_only"
     # Chat history
     chat_session_id: str = ""  # Persistent chat session ID for resuming
+    # Claude session ID for --resume functionality
+    claude_session_id: str = ""  # Claude Code session to resume
 
     def __post_init__(self):
         self.working_dir = Path(self.working_dir)
+
+
+def list_claude_sessions(working_dir: Path) -> list[dict]:
+    """List available Claude Code sessions for a working directory.
+
+    Scans ~/.claude/projects/ for session files matching the working directory.
+    Returns sessions sorted by last modified time (most recent first).
+    """
+    claude_dir = Path.home() / ".claude" / "projects"
+    if not claude_dir.exists():
+        return []
+
+    # Convert working dir to Claude's naming convention (path with dashes)
+    # e.g., /Users/foo/bar -> -Users-foo-bar
+    safe_name = str(working_dir.resolve()).replace("/", "-")
+    project_dir = claude_dir / safe_name
+
+    if not project_dir.exists():
+        return []
+
+    sessions = []
+    for session_file in project_dir.glob("*.jsonl"):
+        # Skip agent sessions (subagent files)
+        if session_file.stem.startswith("agent-"):
+            continue
+
+        try:
+            stat = session_file.stat()
+            # Try to read first and last line for metadata
+            preview = ""
+            session_id = session_file.stem
+
+            # Check if there's a subdirectory with same name (active session)
+            has_subdir = (project_dir / session_id).is_dir()
+
+            with open(session_file, "r") as f:
+                first_line = f.readline()
+                if first_line:
+                    try:
+                        data = json.loads(first_line)
+                        if data.get("type") == "user":
+                            msg = data.get("message", {})
+                            content = msg.get("content", [])
+                            if isinstance(content, list) and content:
+                                for block in content:
+                                    if isinstance(block, dict) and block.get("type") == "text":
+                                        text = block.get("text", "")
+                                        # Skip system messages
+                                        if not text.startswith("<"):
+                                            preview = text[:100]
+                                            break
+                    except json.JSONDecodeError:
+                        pass
+
+            sessions.append({
+                "sessionId": session_id,
+                "lastModified": int(stat.st_mtime * 1000),
+                "size": stat.st_size,
+                "preview": preview,
+                "isActive": has_subdir,
+            })
+        except (IOError, OSError):
+            continue
+
+    # Sort by last modified (most recent first)
+    sessions.sort(key=lambda x: x["lastModified"], reverse=True)
+    return sessions[:20]  # Limit to 20 most recent
 
 
 class DarkCodeServer:
@@ -681,11 +750,15 @@ class DarkCodeServer:
                 else:
                     self.ip_session_count[client_ip] = count
 
-    async def _start_claude_process(self, session: Session):
+    async def _start_claude_process(self, session: Session, resume_session_id: str = None):
         """Start the Claude Code CLI process.
 
         SECURITY: Uses validated working directory from config.
         Uses -p (print mode) with stream-json for bidirectional streaming.
+
+        Args:
+            session: The session to start Claude for
+            resume_session_id: Optional Claude session ID to resume (for handoffs)
         """
         try:
             # Use validated working directory
@@ -701,6 +774,10 @@ class DarkCodeServer:
                 "--include-partial-messages",  # Enable streaming deltas
                 "--permission-mode", self.config.permission_mode,
             ]
+
+            # Add resume flag if resuming a session (session handoff)
+            if resume_session_id:
+                cmd.extend(["--resume", resume_session_id])
 
             session.process = subprocess.Popen(
                 cmd,
@@ -1203,6 +1280,45 @@ class DarkCodeServer:
                     "type": "chat_session_deleted",
                     "chatSessionId": chat_session_id,
                 }))
+
+        # === Claude Session Handoffs ===
+        elif msg_type == "list_claude_sessions":
+            # List available Claude Code sessions for handoff
+            sessions_list = list_claude_sessions(session.working_dir)
+            await session.websocket.send(json.dumps({
+                "type": "claude_sessions_list",
+                "sessions": sessions_list,
+                "workingDir": str(session.working_dir),
+            }))
+
+        elif msg_type == "resume_claude_session":
+            # Resume a specific Claude Code session
+            claude_session_id = msg.get("sessionId", "")
+            if not claude_session_id:
+                await session.websocket.send(json.dumps({
+                    "type": "error",
+                    "message": "sessionId is required to resume a session",
+                }))
+                return
+
+            # Kill existing Claude process if running
+            if session.process and self._is_process_alive(session):
+                try:
+                    session.process.terminate()
+                    session.process.wait(timeout=3)
+                except Exception:
+                    session.process.kill()
+
+            # Store the Claude session ID for resume
+            session.claude_session_id = claude_session_id
+
+            # Start Claude with the resume flag
+            await self._start_claude_process(session, resume_session_id=claude_session_id)
+
+            await session.websocket.send(json.dumps({
+                "type": "claude_session_resumed",
+                "sessionId": claude_session_id,
+            }))
 
         # === File Operations ===
         elif msg_type == "list_files":

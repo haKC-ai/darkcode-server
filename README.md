@@ -28,6 +28,23 @@
 
 ---
 
+## TL;DR - Fastest Way to Test
+
+```bash
+# 1. Install the server
+pip install darkcode-server
+
+# 2. Run setup and start
+darkcode setup    # Follow prompts, generates QR code
+darkcode start    # Starts server, shows QR code
+
+# 3. On your phone: Install DarkCode app from Google Play, scan QR
+```
+
+That's it! The QR code connects everything automatically.
+
+---
+
 ## Requirements
 
 > **This is a companion server for the DarkCode Android app.**
