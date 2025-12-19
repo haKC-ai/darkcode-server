@@ -528,10 +528,13 @@ class WebAdminHandler:
         # Route requests
         if clean_path == '/admin' or clean_path == '/admin/':
             is_auth = self._is_authenticated(cookies)
-            logging.info(f"[WebAdmin] Auth check result: {is_auth}")
+            print(f"[WebAdmin] Auth check: is_auth={is_auth}, cookie={cookies.get('darkcode_admin_session', 'NONE')[:16] if cookies.get('darkcode_admin_session') else 'NONE'}...")
+            print(f"[WebAdmin] Known sessions: {[s[:8]+'...' for s in WebAdminHandler._authenticated_sessions]}")
             if is_auth:
+                print("[WebAdmin] Returning DASHBOARD page")
                 return self._dashboard_page()
             else:
+                print("[WebAdmin] Returning LOGIN page")
                 return self._login_page()
 
         elif clean_path == '/admin/logo':

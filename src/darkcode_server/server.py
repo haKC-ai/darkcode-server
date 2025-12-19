@@ -1241,6 +1241,7 @@ class DarkCodeServer:
         elif msg_type == "execute_bash":
             command = msg.get("command", "")
             timeout = msg.get("timeout", 30000)  # Default 30s
+            logger.info(f"[BASH] Received execute_bash: {command[:100]}")
             await self._handle_execute_bash(session, command, timeout)
 
     async def _handle_execute_bash(self, session: Session, command: str, timeout_ms: int):
@@ -1303,14 +1304,16 @@ class DarkCodeServer:
                         output += "\n"
                     output += stderr.decode("utf-8", errors="replace")
 
-                await session.websocket.send(json.dumps({
+                response = {
                     "type": "bash_output",
                     "command": command,
                     "output": output.strip() or "(no output)",
                     "exitCode": exit_code,
                     "isError": exit_code != 0,
                     "timestamp": int(time.time() * 1000),
-                }))
+                }
+                logger.info(f"[BASH] Sending response: exit={exit_code}, output_len={len(output)}")
+                await session.websocket.send(json.dumps(response))
 
             except asyncio.TimeoutError:
                 process.kill()
