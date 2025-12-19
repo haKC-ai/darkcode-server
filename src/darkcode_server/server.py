@@ -207,6 +207,26 @@ def _decode_claude_project_path(encoded_name: str) -> str:
     return simple_decoded
 
 
+def get_claude_version() -> str:
+    """Get Claude Code CLI version."""
+    try:
+        result = subprocess.run(
+            ["claude", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            # Parse version from output like "claude 2.0.37"
+            output = result.stdout.strip()
+            if output.startswith("claude "):
+                return output.split()[1]
+            return output
+    except Exception:
+        pass
+    return "unknown"
+
+
 def list_claude_sessions(working_dir: Path) -> list[dict]:
     """List all available Claude Code sessions across all projects.
 
@@ -278,6 +298,20 @@ def list_claude_sessions(working_dir: Path) -> list[dict]:
                         except json.JSONDecodeError:
                             continue
 
+                # Count messages for sync detection
+                message_count = 0
+                try:
+                    with open(session_file, "r") as f:
+                        for line in f:
+                            try:
+                                data = json.loads(line)
+                                if data.get("type") in ("user", "assistant"):
+                                    message_count += 1
+                            except json.JSONDecodeError:
+                                continue
+                except (IOError, OSError):
+                    pass
+
                 sessions.append({
                     "sessionId": session_id,
                     "lastModified": int(stat.st_mtime * 1000),
@@ -285,6 +319,7 @@ def list_claude_sessions(working_dir: Path) -> list[dict]:
                     "preview": preview,
                     "isActive": has_subdir,
                     "projectPath": actual_path,
+                    "messageCount": message_count,  # For Whisper Sync
                 })
             except (IOError, OSError):
                 continue
@@ -790,6 +825,9 @@ class DarkCodeServer:
                         # Start Claude process
                         await self._start_claude_process(session)
 
+                        # Get Claude version
+                        claude_version = get_claude_version()
+
                         auth_response = {
                             "type": "auth_result",
                             "success": True,
@@ -800,6 +838,8 @@ class DarkCodeServer:
                             "state": self._state.value,
                             "isGuest": is_guest,
                             "permissionLevel": permission_level,
+                            "claudeVersion": claude_version,
+                            "serverName": self.config.server_name,
                         }
                         if is_guest and guest_info:
                             auth_response["guestName"] = guest_info.get("name", "")
