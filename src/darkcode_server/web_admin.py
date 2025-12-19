@@ -481,8 +481,8 @@ DASHBOARD_CONTENT = """
         DARKCODE <span>admin</span>
     </div>
     <nav class="nav-links">
-        <a href="/admin" class="nav-link active">Dashboard</a>
-        <a href="/admin/config" class="nav-link">Config</a>
+        <a href="/admin?session={session_token}" class="nav-link active">Dashboard</a>
+        <a href="/admin/config?session={session_token}" class="nav-link">Config</a>
     </nav>
     <div class="status-badge">Server Running</div>
 </header>
