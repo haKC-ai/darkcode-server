@@ -120,6 +120,32 @@ def print_qr_code(config: ServerConfig, console: Console, mode: str = "direct", 
     return deep_link
 
 
+def generate_qr_png_base64(config: ServerConfig, mode: str = "direct") -> str:
+    """Generate QR code as base64-encoded PNG for web display."""
+    import io
+
+    deep_link = generate_deep_link(config, mode)
+
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=8,
+        border=2,
+    )
+    qr.add_data(deep_link)
+    qr.make(fit=True)
+
+    # Generate PNG image
+    img = qr.make_image(fill_color="black", back_color="white")
+
+    # Convert to base64
+    buffer = io.BytesIO()
+    img.save(buffer, format='PNG')
+    buffer.seek(0)
+
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
 def print_server_info(config: ServerConfig, console: Console):
     """Print server information with QR codes."""
     from rich.panel import Panel

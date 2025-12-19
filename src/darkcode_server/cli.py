@@ -925,6 +925,31 @@ def token():
     console.print(f"[cyan]Auth Token:[/] {cfg.token}")
 
 
+@main.command()
+def pin():
+    """Show web admin PIN for running server.
+
+    If a DarkCode server is running (daemon or foreground),
+    this shows the PIN needed to access the web admin interface.
+    """
+    from darkcode_server.web_admin import WebAdminHandler
+
+    # Try to load PIN from file (saved by running server)
+    pin = WebAdminHandler.load_pin_from_file()
+
+    if pin:
+        cfg = ServerConfig.load()
+        local_ips = cfg.get_local_ips()
+        local_ip = local_ips[0]['address'] if local_ips else '127.0.0.1'
+        protocol = 'https' if cfg.tls_enabled else 'http'
+
+        console.print(f"\n[bold cyan]Web Admin PIN:[/] [bold yellow]{pin}[/]\n")
+        console.print(f"[dim]URL: {protocol}://{local_ip}:{cfg.port}/admin[/]\n")
+    else:
+        console.print("[yellow]No running server found.[/]")
+        console.print("[dim]Start the server with 'darkcode start' or 'darkcode daemon' first.[/]")
+
+
 @main.command("token-reset")
 def token_reset():
     """Generate new auth token."""

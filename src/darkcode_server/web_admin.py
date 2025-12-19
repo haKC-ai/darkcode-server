@@ -17,25 +17,23 @@ from datetime import datetime, timedelta
 from typing import Optional
 from http import HTTPStatus
 
+from darkcode_server.qrcode import generate_qr_png_base64
+
 # ASCII art logo with synthwave gradient styling
-ASCII_LOGO = """
-          .................                                                        ..........
-         .#######-########+.         .+#####+.+###################+#####-       .########+.
-         .#######- .+########.     -#########.####################+#####+     -########-
-         .-------.     --------..------..---..------.       .-----.-----.  .--------..
-         .#######-      -#############. +####.######.+############+#####+ -########.
-         .#######-        +########+.   +####.######.+############+#####+########+.
-         .#######-     .+########-......+####.######. -######+.   -#####+ .########-.
-         .#######-   .+########.   .+########.######.   .-######- -#####+   .########+.
-         .#######- .+#######+.       .-+++++-.-++++-.      .+++++++#####-     .+#######+.
-         .#######+########+.                                      -##-.         .########+.
-         .######+..................................................... .....................
-         .###+-----------------------------------.--------------------.------------------.
-       ..++---             .-----.        .-----.-----.        .-----------.............
-       +####+.            .#####.        -#####-####+.       .+####-+##################.
-     .#####-             .#####.        -####++####+.       .+####+#####-
-    .###################+####################+###################.##################+.
-   .+#################+-###################-+################+-..##################-.
+ASCII_LOGO = r"""
+░▒▓███████▓▒░ ░▒▓██████▓▒░░▒▓███████▓▒░░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓████████▓▒░▒▓███████▓▒░░▒▓███████▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓███████▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+   __ _________  ________  ________  ___________ __
+  / / \_   ___ \ \_____  \ \______ \ \_   _____/ \ \
+ / /  /    \  \/  /   |   \ |    |  \ |    __)_   \ \
+ \ \  \     \____/    |    \|    `   \|        \  / /
+  \_\  \______  /\_______  /_______  /_______  / /_/
+              \/         \/        \/ SERVER \/
 """
 
 # Embedded favicon (32x32)
@@ -106,20 +104,24 @@ ADMIN_HTML = """<!DOCTYPE html>
             font-size: 6px;
             line-height: 1.1;
             white-space: pre;
-            background: linear-gradient(135deg, #8b5cf6 0%, #06b6d4 50%, #a855f7 100%);
+            background: linear-gradient(90deg, #ff00ff 0%, #00ffff 25%, #ff00ff 50%, #00ffff 75%, #ff00ff 100%);
+            background-size: 200% 100%;
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-            margin-bottom: 10px;
-            text-shadow: 0 0 20px rgba(139, 92, 246, 0.5);
-            filter: drop-shadow(0 0 8px rgba(6, 182, 212, 0.3));
+            animation: synthwave 3s linear infinite;
+            font-size: 10px;
+            line-height: 1.1;
+        }}
+
+        @keyframes synthwave {{
+            0% {{ background-position: 0% 50%; }}
+            100% {{ background-position: 200% 50%; }}
         }}
 
         .ascii-logo-container {{
             text-align: center;
-            padding: 20px;
-            background: linear-gradient(180deg, rgba(139, 92, 246, 0.1) 0%, transparent 100%);
-            border-radius: 12px;
+            padding: 10px 0 20px 0;
             margin-bottom: 20px;
         }}
 
@@ -480,65 +482,42 @@ DASHBOARD_CONTENT = """
     <div class="logo">
         DARKCODE <span>admin</span>
     </div>
-    <nav class="nav-links">
-        <a href="/admin?session={session_token}" class="nav-link active">Dashboard</a>
-        <a href="/admin/config?session={session_token}" class="nav-link">Config</a>
-    </nav>
     <div class="status-badge">Server Running</div>
 </header>
 
+{message}
+<div id="save-status" style="display: none; position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; z-index: 1000;"></div>
+
 <div class="grid">
     <div class="card">
+        <h2>Quick Connect</h2>
+        <div style="text-align: center; margin-bottom: 15px;">
+            <div style="background: white; padding: 10px; border-radius: 8px; display: inline-block;">
+                <img src="data:image/png;base64,{qr_code_base64}" alt="Connection QR Code" style="max-width: 180px;">
+            </div>
+            <p class="stat-label" style="margin-top: 10px;">Scan with DarkCode app</p>
+        </div>
+        <p class="stat-label" style="margin-bottom: 10px;">Auth Token (masked)</p>
+        <div class="token-display">{token_masked}</div>
+        <div class="actions" style="margin-top: 15px;">
+            <button class="btn" onclick="copyToken()">Copy Full Token</button>
+            <button class="btn btn-danger" onclick="if(confirm('Generate new token? Current connections will be invalidated.')) location.href='/admin/config/rotate-token?session={session_token}'">
+                Rotate Token
+            </button>
+            {unbind_button}
+        </div>
+    </div>
+
+    <div class="card">
         <h2>Server Status</h2>
+        <div class="stat">
+            <span class="stat-label">Mode</span>
+            <span class="stat-value" style="color: {daemon_mode_color};">{daemon_mode}</span>
+        </div>
         <div class="stat">
             <span class="stat-label">Uptime</span>
             <span class="stat-value">{uptime}</span>
         </div>
-        <div class="stat">
-            <span class="stat-label">Port</span>
-            <span class="stat-value">{port}</span>
-        </div>
-        <div class="stat">
-            <span class="stat-label">Working Directory</span>
-            <span class="stat-value" title="{working_dir}">{working_dir_short}</span>
-        </div>
-        <div class="stat">
-            <span class="stat-label">Server State</span>
-            <span class="stat-value">{state}</span>
-        </div>
-        <div class="stat">
-            <span class="stat-label">Device Lock</span>
-            <span class="stat-value">{device_lock}</span>
-        </div>
-        <div class="stat">
-            <span class="stat-label">Bound Device</span>
-            <span class="stat-value">{bound_device}</span>
-        </div>
-        <div class="stat">
-            <span class="stat-label">TLS</span>
-            <span class="stat-value">{tls_status}</span>
-        </div>
-        {unbind_button}
-    </div>
-
-    <div class="card">
-        <h2>Active Sessions ({session_count})</h2>
-        <div class="sessions-list">
-            {sessions_html}
-        </div>
-    </div>
-
-    <div class="card">
-        <h2>Authentication</h2>
-        <p class="stat-label" style="margin-bottom: 10px;">Auth Token (masked)</p>
-        <div class="token-display">{token_masked}</div>
-        <div class="actions">
-            <button class="btn" onclick="copyToken()">Copy Full Token</button>
-        </div>
-    </div>
-
-    <div class="card">
-        <h2>Connection Info</h2>
         <div class="stat">
             <span class="stat-label">Local IP</span>
             <span class="stat-value">{local_ip}</span>
@@ -548,28 +527,132 @@ DASHBOARD_CONTENT = """
             <span class="stat-label">WebSocket URL</span>
             <span class="stat-value">{ws_url}</span>
         </div>
+        <div class="stat">
+            <span class="stat-label">Server State</span>
+            <span class="stat-value">{state}</span>
+        </div>
+        <div class="stat">
+            <span class="stat-label">Active Sessions</span>
+            <span class="stat-value">{session_count}</span>
+        </div>
+        <div class="sessions-list" style="margin-top: 10px; max-height: 150px;">
+            {sessions_html}
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Server Settings</h2>
+        <div class="form-group">
+            <label>Port</label>
+            <input type="number" id="port" value="{port}" min="1" max="65535" onchange="saveSetting('port', this.value)">
+        </div>
+        <div class="form-group">
+            <label>Working Directory</label>
+            <input type="text" id="working_dir" value="{working_dir}" onchange="saveSetting('working_dir', this.value)">
+        </div>
+        <div class="form-group">
+            <label>Server Name</label>
+            <input type="text" id="server_name" value="{server_name}" onchange="saveSetting('server_name', this.value)">
+        </div>
+        <div class="form-group">
+            <label>Permission Mode</label>
+            <select id="permission_mode" onchange="saveSetting('permission_mode', this.value)">
+                <option value="default" {perm_default}>default</option>
+                <option value="acceptEdits" {perm_accept}>acceptEdits</option>
+                <option value="bypassPermissions" {perm_bypass}>bypassPermissions</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Security Settings</h2>
+        <div class="form-group toggle-switch">
+            <input type="checkbox" id="device_lock" {device_lock_checked} onchange="saveSetting('device_lock', this.checked ? '1' : '0')">
+            <label for="device_lock">Device Lock</label>
+        </div>
+        <div class="form-group toggle-switch">
+            <input type="checkbox" id="tls_enabled" {tls_enabled_checked} onchange="saveSetting('tls_enabled', this.checked ? '1' : '0')">
+            <label for="tls_enabled">TLS Enabled</label>
+        </div>
+        <div class="form-group">
+            <label>Max Sessions/IP</label>
+            <input type="number" id="max_sessions_per_ip" value="{max_sessions_per_ip}" min="1" max="100" onchange="saveSetting('max_sessions_per_ip', this.value)">
+        </div>
+        <div class="form-group">
+            <label>Idle Timeout (sec)</label>
+            <input type="number" id="idle_timeout" value="{idle_timeout}" min="0" onchange="saveSetting('idle_timeout', this.value)">
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Logs</h2>
+        <div class="log-viewer" id="log-viewer" style="background: #0a0a0f; border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-family: monospace; font-size: 11px; max-height: 200px; overflow-y: auto; white-space: pre-wrap; color: var(--text-dim);">
+{log_content}
+        </div>
+        <div class="actions" style="margin-top: 10px;">
+            <button class="btn" onclick="refreshLogs()">Refresh</button>
+            <button class="btn" onclick="downloadLogs()">Download</button>
+        </div>
     </div>
 </div>
 
-<p class="refresh-note">Auto-refreshing every 5 seconds | <a href="/admin/logout" style="color: var(--accent);">Logout</a></p>
+<p class="refresh-note"><a href="/admin/logout" style="color: var(--accent);">Logout</a></p>
 
 <script>
     const TOKEN = '{token_full}';
+    const SESSION = '{session_token}';
+
     function copyToken() {{
         navigator.clipboard.writeText(TOKEN).then(() => {{
             alert('Token copied to clipboard');
         }});
     }}
-    // Session token for URL-based auth (websockets doesn't support cookies properly)
-    const SESSION_TOKEN = '{session_token}';
-    // Auto-refresh dashboard every 5 seconds, preserving session in URL
-    setTimeout(() => {{
-        if (SESSION_TOKEN) {{
-            window.location.href = '/admin?session=' + SESSION_TOKEN;
-        }} else {{
-            location.reload();
-        }}
-    }}, 5000);
+
+    function saveSetting(key, value) {{
+        const status = document.getElementById('save-status');
+        status.style.display = 'block';
+        status.style.background = 'rgba(0, 212, 255, 0.2)';
+        status.style.border = '1px solid var(--accent)';
+        status.style.color = 'var(--accent)';
+        status.textContent = 'Saving...';
+
+        fetch('/admin/config/set?session=' + SESSION + '&key=' + encodeURIComponent(key) + '&value=' + encodeURIComponent(value))
+            .then(r => r.json())
+            .then(data => {{
+                if (data.success) {{
+                    status.style.background = 'rgba(0, 255, 136, 0.2)';
+                    status.style.border = '1px solid var(--success)';
+                    status.style.color = 'var(--success)';
+                    status.textContent = 'Saved!';
+                }} else {{
+                    status.style.background = 'rgba(255, 68, 102, 0.2)';
+                    status.style.border = '1px solid var(--danger)';
+                    status.style.color = 'var(--danger)';
+                    status.textContent = 'Error: ' + (data.error || 'Unknown');
+                }}
+                setTimeout(() => status.style.display = 'none', 2000);
+            }})
+            .catch(err => {{
+                status.style.background = 'rgba(255, 68, 102, 0.2)';
+                status.style.border = '1px solid var(--danger)';
+                status.style.color = 'var(--danger)';
+                status.textContent = 'Error saving';
+                setTimeout(() => status.style.display = 'none', 2000);
+            }});
+    }}
+
+    function refreshLogs() {{
+        fetch('/admin/logs?session=' + SESSION)
+            .then(r => r.text())
+            .then(data => {{
+                document.getElementById('log-viewer').textContent = data;
+                document.getElementById('log-viewer').scrollTop = document.getElementById('log-viewer').scrollHeight;
+            }});
+    }}
+
+    function downloadLogs() {{
+        window.location.href = '/admin/logs/download?session=' + SESSION;
+    }}
 </script>
 """
 
@@ -587,38 +670,39 @@ CONFIG_CONTENT = """
 
 {message}
 
-<form method="POST" action="/admin/config/save?session={session_token}">
+<div id="save-status" style="display: none; position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; z-index: 1000;"></div>
+
 <div class="grid">
     <div class="card">
         <h2 class="section-title">Server Settings</h2>
 
         <div class="form-group">
             <label>Port</label>
-            <input type="number" name="port" value="{port}" min="1" max="65535">
+            <input type="number" id="port" value="{port}" min="1" max="65535" onchange="saveSetting('port', this.value)">
             <div class="hint">WebSocket server port (default: 3100)</div>
         </div>
 
         <div class="form-group">
             <label>Working Directory</label>
-            <input type="text" name="working_dir" value="{working_dir}">
+            <input type="text" id="working_dir" value="{working_dir}" onchange="saveSetting('working_dir', this.value)">
             <div class="hint">Directory where Claude Code operates</div>
         </div>
 
         <div class="form-group">
             <label>Browse Directory (optional)</label>
-            <input type="text" name="browse_dir" value="{browse_dir}" placeholder="Defaults to working directory">
+            <input type="text" id="browse_dir" value="{browse_dir}" placeholder="Defaults to working directory" onchange="saveSetting('browse_dir', this.value)">
             <div class="hint">Default directory for app file browser</div>
         </div>
 
         <div class="form-group">
             <label>Server Name</label>
-            <input type="text" name="server_name" value="{server_name}">
+            <input type="text" id="server_name" value="{server_name}" onchange="saveSetting('server_name', this.value)">
             <div class="hint">Display name shown in the app</div>
         </div>
 
         <div class="form-group">
             <label>Permission Mode</label>
-            <select name="permission_mode">
+            <select id="permission_mode" onchange="saveSetting('permission_mode', this.value)">
                 <option value="default" {perm_default}>default - Ask for all permissions</option>
                 <option value="acceptEdits" {perm_accept}>acceptEdits - Auto-accept file edits</option>
                 <option value="bypassPermissions" {perm_bypass}>bypassPermissions - Skip all prompts (dangerous)</option>
@@ -631,38 +715,38 @@ CONFIG_CONTENT = """
         <h2 class="section-title">Security Settings</h2>
 
         <div class="form-group toggle-switch">
-            <input type="checkbox" name="device_lock" id="device_lock" {device_lock_checked}>
+            <input type="checkbox" id="device_lock" {device_lock_checked} onchange="saveSetting('device_lock', this.checked ? '1' : '0')">
             <label for="device_lock">Device Lock</label>
         </div>
         <div class="hint" style="margin-bottom: 20px;">Lock server to first authenticated device</div>
 
         <div class="form-group toggle-switch">
-            <input type="checkbox" name="local_only" id="local_only" {local_only_checked}>
+            <input type="checkbox" id="local_only" {local_only_checked} onchange="saveSetting('local_only', this.checked ? '1' : '0')">
             <label for="local_only">Local Only</label>
         </div>
         <div class="hint" style="margin-bottom: 20px;">Only accept connections from localhost (SSH tunnel mode)</div>
 
         <div class="form-group">
             <label>Max Sessions per IP</label>
-            <input type="number" name="max_sessions_per_ip" value="{max_sessions_per_ip}" min="1" max="100">
+            <input type="number" id="max_sessions_per_ip" value="{max_sessions_per_ip}" min="1" max="100" onchange="saveSetting('max_sessions_per_ip', this.value)">
             <div class="hint">Maximum concurrent sessions from one IP</div>
         </div>
 
         <div class="form-group">
             <label>Idle Timeout (seconds)</label>
-            <input type="number" name="idle_timeout" value="{idle_timeout}" min="0">
+            <input type="number" id="idle_timeout" value="{idle_timeout}" min="0" onchange="saveSetting('idle_timeout', this.value)">
             <div class="hint">Seconds before sleep mode (0 = disabled)</div>
         </div>
 
         <div class="form-group">
             <label>Rate Limit Attempts</label>
-            <input type="number" name="rate_limit_attempts" value="{rate_limit_attempts}" min="1">
+            <input type="number" id="rate_limit_attempts" value="{rate_limit_attempts}" min="1" onchange="saveSetting('rate_limit_attempts', this.value)">
             <div class="hint">Auth attempts before lockout</div>
         </div>
 
         <div class="form-group">
             <label>Rate Limit Window (seconds)</label>
-            <input type="number" name="rate_limit_window" value="{rate_limit_window}" min="1">
+            <input type="number" id="rate_limit_window" value="{rate_limit_window}" min="1" onchange="saveSetting('rate_limit_window', this.value)">
             <div class="hint">Time window for rate limiting</div>
         </div>
     </div>
@@ -671,52 +755,66 @@ CONFIG_CONTENT = """
         <h2 class="section-title">TLS/Encryption</h2>
 
         <div class="form-group toggle-switch">
-            <input type="checkbox" name="tls_enabled" id="tls_enabled" {tls_enabled_checked}>
+            <input type="checkbox" id="tls_enabled" {tls_enabled_checked} onchange="saveSetting('tls_enabled', this.checked ? '1' : '0')">
             <label for="tls_enabled">TLS Enabled</label>
         </div>
         <div class="hint" style="margin-bottom: 20px;">Use wss:// instead of ws://</div>
 
         <div class="form-group toggle-switch">
-            <input type="checkbox" name="mtls_enabled" id="mtls_enabled" {mtls_enabled_checked}>
+            <input type="checkbox" id="mtls_enabled" {mtls_enabled_checked} onchange="saveSetting('mtls_enabled', this.checked ? '1' : '0')">
             <label for="mtls_enabled">mTLS (Client Certs)</label>
         </div>
         <div class="hint" style="margin-bottom: 20px;">Require client certificates for auth</div>
 
         <div class="form-group">
             <label>Token Rotation (days)</label>
-            <input type="number" name="token_rotation_days" value="{token_rotation_days}" min="0">
+            <input type="number" id="token_rotation_days" value="{token_rotation_days}" min="0" onchange="saveSetting('token_rotation_days', this.value)">
             <div class="hint">Days before auto-rotation (0 = disabled)</div>
         </div>
 
         <div class="form-group">
             <label>Token Grace Period (hours)</label>
-            <input type="number" name="token_grace_hours" value="{token_grace_hours}" min="0">
+            <input type="number" id="token_grace_hours" value="{token_grace_hours}" min="0" onchange="saveSetting('token_grace_hours', this.value)">
             <div class="hint">Hours old tokens remain valid after rotation</div>
         </div>
     </div>
-
-    <div class="card">
-        <h2 class="section-title">Actions</h2>
-
-        <div class="form-group">
-            <label>Current Token</label>
-            <div class="token-display" style="font-size: 12px;">{token_masked}</div>
-        </div>
-
-        <div class="actions">
-            <button type="button" class="btn btn-danger" onclick="if(confirm('Generate new token? Current connections will be invalidated.')) location.href='/admin/config/rotate-token?session={session_token}'">
-                Rotate Token
-            </button>
-            {unbind_button}
-        </div>
-    </div>
 </div>
 
-<div class="form-actions">
-    <button type="submit" class="btn btn-primary">Save Configuration</button>
-    <button type="button" class="btn" onclick="location.href='/admin?session={session_token}'">Cancel</button>
-</div>
-</form>
+<script>
+const SESSION = '{session_token}';
+function saveSetting(key, value) {{
+    const status = document.getElementById('save-status');
+    status.style.display = 'block';
+    status.style.background = 'rgba(0, 212, 255, 0.2)';
+    status.style.border = '1px solid var(--accent)';
+    status.style.color = 'var(--accent)';
+    status.textContent = 'Saving...';
+
+    fetch('/admin/config/set?session=' + SESSION + '&key=' + encodeURIComponent(key) + '&value=' + encodeURIComponent(value))
+        .then(r => r.json())
+        .then(data => {{
+            if (data.success) {{
+                status.style.background = 'rgba(0, 255, 136, 0.2)';
+                status.style.border = '1px solid var(--success)';
+                status.style.color = 'var(--success)';
+                status.textContent = 'Saved!';
+            }} else {{
+                status.style.background = 'rgba(255, 68, 102, 0.2)';
+                status.style.border = '1px solid var(--danger)';
+                status.style.color = 'var(--danger)';
+                status.textContent = 'Error: ' + (data.error || 'Unknown');
+            }}
+            setTimeout(() => status.style.display = 'none', 2000);
+        }})
+        .catch(err => {{
+            status.style.background = 'rgba(255, 68, 102, 0.2)';
+            status.style.border = '1px solid var(--danger)';
+            status.style.color = 'var(--danger)';
+            status.textContent = 'Error saving';
+            setTimeout(() => status.style.display = 'none', 2000);
+        }});
+}}
+</script>
 
 <p class="refresh-note"><a href="/admin/logout" style="color: var(--accent);">Logout</a></p>
 """
@@ -753,13 +851,46 @@ class WebAdminHandler:
         """Get the current web PIN, generating one if needed."""
         if cls._web_pin is None:
             cls._web_pin = generate_web_pin()
+            cls._save_pin_to_file(cls._web_pin)
         return cls._web_pin
 
     @classmethod
     def regenerate_pin(cls) -> str:
         """Regenerate the web PIN."""
         cls._web_pin = generate_web_pin()
+        cls._save_pin_to_file(cls._web_pin)
         return cls._web_pin
+
+    @classmethod
+    def _save_pin_to_file(cls, pin: str):
+        """Save the PIN to a file for daemon mode access."""
+        from pathlib import Path
+        try:
+            pin_dir = Path.home() / '.darkcode'
+            pin_dir.mkdir(parents=True, exist_ok=True)
+            pin_file = pin_dir / 'web_pin'
+            pin_file.write_text(pin)
+            pin_file.chmod(0o600)  # Only owner can read
+        except Exception:
+            pass  # Non-critical
+
+    @classmethod
+    def load_pin_from_file(cls) -> Optional[str]:
+        """Load the PIN from file (for CLI access to running daemon)."""
+        from pathlib import Path
+        try:
+            pin_file = Path.home() / '.darkcode' / 'web_pin'
+            if pin_file.exists():
+                return pin_file.read_text().strip()
+        except Exception:
+            pass
+        return None
+
+    def _is_daemon_mode(self) -> bool:
+        """Check if the server is running in daemon mode."""
+        from pathlib import Path
+        pid_file = self.config.config_dir / 'darkcode.pid'
+        return pid_file.exists()
 
     def _generate_session_cookie(self) -> str:
         """Generate a random session cookie."""
@@ -812,12 +943,17 @@ class WebAdminHandler:
         if clean_path == '/admin' or clean_path == '/admin/':
             # Check for session token in query params (from login redirect)
             session_from_url = query_params.get('session', [None])[0]
+            rotated = query_params.get('rotated', [None])[0]
+            message = ''
+            if rotated:
+                message = '<div class="success">Token rotated successfully! Update your app with the new token.</div>'
+
             if session_from_url and session_from_url in WebAdminHandler._authenticated_sessions:
-                return self._dashboard_page(session_token=session_from_url)
+                return self._dashboard_page(session_token=session_from_url, message=message)
 
             # Check for session in cookie
             if self._is_authenticated(cookies):
-                return self._dashboard_page()
+                return self._dashboard_page(message=message)
             else:
                 return self._login_page()
 
@@ -876,16 +1012,11 @@ class WebAdminHandler:
             return self._unbind_device()
 
         elif clean_path == '/admin/config':
+            # Redirect to main dashboard - all settings are now there
             session_from_url = query_params.get('session', [None])[0]
-            rotated = query_params.get('rotated', [None])[0]
-            message = ''
-            if rotated:
-                message = '<div class="success">Token rotated successfully! Update your app with the new token.</div>'
-            if session_from_url and session_from_url in WebAdminHandler._authenticated_sessions:
-                return self._config_page(session_token=session_from_url, message=message)
-            if self._is_authenticated(cookies):
-                return self._config_page(message=message)
-            return self._login_page()
+            if session_from_url:
+                return (302, {'Location': f'/admin?session={session_from_url}'}, b'')
+            return (302, {'Location': '/admin'}, b'')
 
         elif clean_path == '/admin/config/save':
             session_from_url = query_params.get('session', [None])[0]
@@ -904,6 +1035,34 @@ class WebAdminHandler:
                     return self._login_page()
                 session_from_url = cookies.get('darkcode_admin_session')
             return self._rotate_token(session_from_url)
+
+        elif clean_path == '/admin/config/set':
+            session_from_url = query_params.get('session', [None])[0]
+            if not (session_from_url and session_from_url in WebAdminHandler._authenticated_sessions):
+                if not self._is_authenticated(cookies):
+                    return (401, {'Content-Type': 'application/json'}, b'{"success": false, "error": "Unauthorized"}')
+            key = query_params.get('key', [None])[0]
+            value = query_params.get('value', [''])[0]
+            return self._set_config_value(key, value)
+
+        elif clean_path == '/admin/logs':
+            session_from_url = query_params.get('session', [None])[0]
+            if not (session_from_url and session_from_url in WebAdminHandler._authenticated_sessions):
+                if not self._is_authenticated(cookies):
+                    return (401, {'Content-Type': 'text/plain'}, b'Unauthorized')
+            logs = self._get_recent_logs()
+            return (200, {'Content-Type': 'text/plain'}, logs.encode('utf-8'))
+
+        elif clean_path == '/admin/logs/download':
+            session_from_url = query_params.get('session', [None])[0]
+            if not (session_from_url and session_from_url in WebAdminHandler._authenticated_sessions):
+                if not self._is_authenticated(cookies):
+                    return (401, {'Content-Type': 'text/plain'}, b'Unauthorized')
+            logs = self._get_full_logs()
+            return (200, {
+                'Content-Type': 'text/plain',
+                'Content-Disposition': 'attachment; filename="darkcode-server.log"'
+            }, logs.encode('utf-8'))
 
         else:
             return (404, {'Content-Type': 'text/html'}, b'Not Found')
@@ -924,7 +1083,7 @@ class WebAdminHandler:
             'Pragma': 'no-cache'
         }, page.encode('utf-8'))
 
-    def _dashboard_page(self, session_token: str = None) -> tuple:
+    def _dashboard_page(self, session_token: str = None, message: str = '') -> tuple:
         """Render the main dashboard."""
         # Calculate uptime
         uptime_secs = int(time.time() - (WebAdminHandler._start_time or time.time()))
@@ -987,17 +1146,44 @@ class WebAdminHandler:
             </div>
             '''
 
+        # Generate QR code for quick connect
+        try:
+            qr_code_base64 = generate_qr_png_base64(self.config, "direct")
+        except Exception:
+            qr_code_base64 = ""
+
+        # Get log content
+        log_content = self._get_recent_logs()
+
+        # Permission mode selected states
+        perm_mode = getattr(self.config, 'permission_mode', 'default')
+        perm_default = 'selected' if perm_mode == 'default' else ''
+        perm_accept = 'selected' if perm_mode == 'acceptEdits' else ''
+        perm_bypass = 'selected' if perm_mode == 'bypassPermissions' else ''
+
+        # Detect daemon mode by checking for PID file
+        is_daemon = self._is_daemon_mode()
+        daemon_mode = 'Daemon' if is_daemon else 'Foreground'
+        daemon_mode_color = 'var(--success)' if is_daemon else 'var(--warning)'
+
         content = DASHBOARD_CONTENT.format(
             ascii_logo=html.escape(ASCII_LOGO),
+            message=message,
+            daemon_mode=daemon_mode,
+            daemon_mode_color=daemon_mode_color,
             uptime=uptime,
             port=self.config.port,
-            working_dir=working_dir,
-            working_dir_short=working_dir_short,
+            working_dir=str(self.config.working_dir),
+            server_name=getattr(self.config, 'server_name', 'DarkCode Server'),
+            perm_default=perm_default,
+            perm_accept=perm_accept,
+            perm_bypass=perm_bypass,
             state=state,
-            device_lock='Enabled' if self.config.device_lock else 'Disabled',
-            bound_device=bound_device,
+            device_lock_checked='checked' if self.config.device_lock else '',
+            tls_enabled_checked='checked' if self.config.tls_enabled else '',
+            max_sessions_per_ip=getattr(self.config, 'max_sessions_per_ip', 5),
+            idle_timeout=getattr(self.config, 'idle_timeout', 0),
             unbind_button=unbind_button,
-            tls_status='Enabled (wss://)' if self.config.tls_enabled else 'Disabled (ws://)',
             session_count=session_count,
             sessions_html=sessions_html,
             token_masked=self.config.token[:4] + '*' * 20 + self.config.token[-4:],
@@ -1006,6 +1192,8 @@ class WebAdminHandler:
             tailscale_row=tailscale_row,
             ws_url=ws_url,
             session_token=session_token or '',
+            qr_code_base64=qr_code_base64,
+            log_content=log_content,
         )
 
         page = ADMIN_HTML.format(content=content)
@@ -1043,6 +1231,45 @@ class WebAdminHandler:
         }
 
         return (200, {'Content-Type': 'application/json'}, json.dumps(data).encode('utf-8'))
+
+    def _get_log_path(self) -> str:
+        """Get the path to the log file."""
+        from pathlib import Path
+        log_dir = self.config.working_dir / '.darkcode'
+        log_file = log_dir / 'server.log'
+        if log_file.exists():
+            return str(log_file)
+        # Try common log locations
+        for path in [
+            Path.home() / '.darkcode' / 'server.log',
+            Path('/tmp') / 'darkcode-server.log',
+        ]:
+            if path.exists():
+                return str(path)
+        return ''
+
+    def _get_recent_logs(self, lines: int = 50) -> str:
+        """Get the last N lines of the log file."""
+        log_path = self._get_log_path()
+        if not log_path:
+            return 'No log file found. Logs will appear here when available.'
+        try:
+            with open(log_path, 'r') as f:
+                all_lines = f.readlines()
+                return ''.join(all_lines[-lines:])
+        except Exception as e:
+            return f'Error reading logs: {e}'
+
+    def _get_full_logs(self) -> str:
+        """Get the full log file content."""
+        log_path = self._get_log_path()
+        if not log_path:
+            return 'No log file found.'
+        try:
+            with open(log_path, 'r') as f:
+                return f.read()
+        except Exception as e:
+            return f'Error reading logs: {e}'
 
     def _config_page(self, session_token: str = None, message: str = '') -> tuple:
         """Render the configuration page."""
@@ -1178,16 +1405,88 @@ class WebAdminHandler:
             message = f'<div class="error">Error saving configuration: {html.escape(str(e))}</div>'
             return self._config_page(session_token=session_token, message=message)
 
+    def _set_config_value(self, key: str, value: str) -> tuple:
+        """Set a single config value via AJAX."""
+        from pathlib import Path
+        from urllib.parse import unquote_plus
+        import json
+
+        try:
+            value = unquote_plus(value)
+
+            if key == 'port':
+                port = int(value)
+                if 1 <= port <= 65535:
+                    self.config.port = port
+            elif key == 'working_dir':
+                if value:
+                    path = Path(value)
+                    if path.exists() and path.is_dir():
+                        self.config.working_dir = path
+            elif key == 'browse_dir':
+                if value:
+                    path = Path(value)
+                    if path.exists() and path.is_dir():
+                        self.config.browse_dir = path
+                else:
+                    self.config.browse_dir = None
+            elif key == 'server_name':
+                if value:
+                    self.config.server_name = value
+            elif key == 'permission_mode':
+                if value in ('default', 'acceptEdits', 'bypassPermissions'):
+                    self.config.permission_mode = value
+            elif key == 'device_lock':
+                self.config.device_lock = value == '1'
+            elif key == 'local_only':
+                self.config.local_only = value == '1'
+            elif key == 'max_sessions_per_ip':
+                val = int(value)
+                if 1 <= val <= 100:
+                    self.config.max_sessions_per_ip = val
+            elif key == 'idle_timeout':
+                val = int(value)
+                if val >= 0:
+                    self.config.idle_timeout = val
+            elif key == 'rate_limit_attempts':
+                val = int(value)
+                if val >= 1:
+                    self.config.rate_limit_attempts = val
+            elif key == 'rate_limit_window':
+                val = int(value)
+                if val >= 1:
+                    self.config.rate_limit_window = val
+            elif key == 'tls_enabled':
+                self.config.tls_enabled = value == '1'
+            elif key == 'mtls_enabled':
+                self.config.mtls_enabled = value == '1'
+            elif key == 'token_rotation_days':
+                val = int(value)
+                if val >= 0:
+                    self.config.token_rotation_days = val
+            elif key == 'token_grace_hours':
+                val = int(value)
+                if val >= 0:
+                    self.config.token_grace_hours = val
+            else:
+                return (400, {'Content-Type': 'application/json'}, json.dumps({'success': False, 'error': 'Unknown key'}).encode())
+
+            self.config.save()
+            return (200, {'Content-Type': 'application/json'}, json.dumps({'success': True}).encode())
+
+        except Exception as e:
+            return (500, {'Content-Type': 'application/json'}, json.dumps({'success': False, 'error': str(e)}).encode())
+
     def _rotate_token(self, session_token: str) -> tuple:
         """Generate a new auth token."""
         import secrets as sec
         self.config.token = sec.token_urlsafe(24)
         self.config.save()
 
-        # Redirect back to config page with success message
+        # Redirect back to dashboard with success message
         return (
             302,
-            {'Location': f'/admin/config?session={session_token}&rotated=1'},
+            {'Location': f'/admin?session={session_token}&rotated=1'},
             b''
         )
 

@@ -2,19 +2,6 @@
   <img src="https://raw.githubusercontent.com/haKC-ai/darkcode-server/main/assets/darkcode_logo.png" alt="DarkCode"/>
 </p>
 
-```
-                       ....---++++.+###################++++++##-.##.
-               ......----++++###.-###########################-.##.-#+.
-           . ...................+########-   ........ -#######+.+#+.##-
-                               .........                +#######+.##--##.
- .......-------------+++##############+                 .--------..##-.##-
-                                                      -########-.##-.##+.
-      ........-----+++############-                .+#######+.-##.-##-
-                             ...................-+########-.+#+.+##.
-  ........-------+++++####-.############################-.##-.##+.
-            ...---++++++.- [D A R K C O D E S E R V E R]+.-##.-##-
-```
-
 <p align="center">
   <a href="https://pypi.org/project/darkcode-server/"><img src="https://img.shields.io/pypi/v/darkcode-server?style=for-the-badge&color=00D9FF" alt="PyPI"/></a>
   <a href="https://pypi.org/project/darkcode-server/"><img src="https://img.shields.io/pypi/pyversions/darkcode-server?style=for-the-badge&color=FF10F0" alt="Python"/></a>
@@ -28,18 +15,28 @@
 
 ---
 
-## TL;DR - Fastest Way to Test
+## How It Works
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/haKC-ai/darkcode-server/main/docs/darkcode_overview.png" alt="DarkCode Overview" width="100%"/>
+</p>
+
+### Quick Start - 3 Steps
+
+**Step 1: Install via pip**
 ```bash
-# 1. Install the server
 pip install darkcode-server
-
-# 2. Run setup and start
-darkcode setup    # Follow prompts, generates QR code
-darkcode start    # Starts server, shows QR code
-
-# 3. On your phone: Install DarkCode app from Google Play, scan QR
 ```
+
+**Step 2: Start the server**
+```bash
+darkcode start
+```
+
+**Step 3: Connect with the Android app**
+- Download [DarkCode from Google Play](https://play.google.com/store/apps/details?id=ai.darkcode.agent)
+- Scan the QR code displayed in your terminal
+- Start chatting with Claude Code from your phone
 
 That's it! The QR code connects everything automatically.
 
