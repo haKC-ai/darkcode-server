@@ -427,6 +427,8 @@ DASHBOARD_CONTENT = """
             alert('Token copied to clipboard');
         }});
     }}
+    // Set session cookie if passed via URL (websockets doesn't support Set-Cookie properly)
+    {session_script}
     // Auto-refresh dashboard every 5 seconds
     setTimeout(() => location.reload(), 5000);
 </script>
@@ -527,6 +529,14 @@ class WebAdminHandler:
 
         # Route requests
         if clean_path == '/admin' or clean_path == '/admin/':
+            # Check for session token in query params (from login redirect)
+            session_from_url = query_params.get('session', [None])[0]
+            if session_from_url and session_from_url in WebAdminHandler._authenticated_sessions:
+                print(f"[WebAdmin] Auth via URL session token: {session_from_url[:8]}...")
+                # Return dashboard with session token embedded for JS to store
+                return self._dashboard_page(session_token=session_from_url)
+
+            # Check for session in cookie
             is_auth = self._is_authenticated(cookies)
             print(f"[WebAdmin] Auth check: is_auth={is_auth}, cookie={cookies.get('darkcode_admin_session', 'NONE')[:16] if cookies.get('darkcode_admin_session') else 'NONE'}...")
             print(f"[WebAdmin] Known sessions: {[s[:8]+'...' for s in WebAdminHandler._authenticated_sessions]}")
@@ -558,13 +568,12 @@ class WebAdminHandler:
                 if self._verify_pin(pin):
                     session_cookie = self._generate_session_cookie()
                     WebAdminHandler._authenticated_sessions.add(session_cookie)
-                    logging.info(f"Login successful, setting cookie: {session_cookie[:8]}...")
-                    # Use HTTP 302 redirect with Set-Cookie header
+                    logging.info(f"Login successful, session: {session_cookie[:8]}...")
+                    # Redirect with session token in URL - cookie approach doesn't work with websockets HTTP
                     return (
                         302,
                         {
-                            'Location': '/admin',
-                            'Set-Cookie': f'darkcode_admin_session={session_cookie}; Path=/; Max-Age=86400; SameSite=Lax',
+                            'Location': f'/admin?session={session_cookie}',
                             'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
                         },
                         b''
@@ -618,7 +627,7 @@ class WebAdminHandler:
             'Pragma': 'no-cache'
         }, page.encode('utf-8'))
 
-    def _dashboard_page(self) -> tuple:
+    def _dashboard_page(self, session_token: str = None) -> tuple:
         """Render the main dashboard."""
         # Calculate uptime
         uptime_secs = int(time.time() - (WebAdminHandler._start_time or time.time()))
@@ -681,6 +690,20 @@ class WebAdminHandler:
             </div>
             '''
 
+        # Build session script for cookie setting
+        session_script = ''
+        if session_token:
+            session_script = f'''
+    (function() {{
+        document.cookie = 'darkcode_admin_session={session_token}; path=/; max-age=86400; SameSite=Lax';
+        // Clean URL by removing session param
+        if (window.history.replaceState) {{
+            const url = new URL(window.location);
+            url.searchParams.delete('session');
+            window.history.replaceState({{}}, '', url);
+        }}
+    }})();'''
+
         content = DASHBOARD_CONTENT.format(
             ascii_logo=html.escape(ASCII_LOGO),
             uptime=uptime,
@@ -699,6 +722,7 @@ class WebAdminHandler:
             local_ip=local_ip,
             tailscale_row=tailscale_row,
             ws_url=ws_url,
+            session_script=session_script,
         )
 
         page = ADMIN_HTML.format(content=content)
