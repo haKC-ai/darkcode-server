@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import ssl
 import subprocess
 import time
@@ -11,6 +12,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Tuple
 from pathlib import Path
+
+# Logger for this module
+logger = logging.getLogger(__name__)
 
 import websockets
 from websockets.server import WebSocketServerProtocol
