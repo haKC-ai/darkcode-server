@@ -1237,6 +1237,103 @@ class DarkCodeServer:
             path = msg.get("path", "")
             await self._handle_delete_file(session, path)
 
+        # === Terminal/Bash Execution ===
+        elif msg_type == "execute_bash":
+            command = msg.get("command", "")
+            timeout = msg.get("timeout", 30000)  # Default 30s
+            await self._handle_execute_bash(session, command, timeout)
+
+    async def _handle_execute_bash(self, session: Session, command: str, timeout_ms: int):
+        """Execute a bash command directly and return the output.
+
+        SECURITY: Commands are executed in the session's working directory.
+        This is for terminal mode - direct shell access for the user.
+        """
+        if not command or not command.strip():
+            await session.websocket.send(json.dumps({
+                "type": "bash_output",
+                "command": command,
+                "output": "Error: Empty command",
+                "exitCode": 1,
+                "isError": True,
+            }))
+            return
+
+        # Sanitize command - basic safety checks
+        command = command.strip()
+
+        # Max command length
+        if len(command) > 10000:
+            await session.websocket.send(json.dumps({
+                "type": "bash_output",
+                "command": command[:100] + "...",
+                "output": "Error: Command too long",
+                "exitCode": 1,
+                "isError": True,
+            }))
+            return
+
+        timeout_sec = min(timeout_ms / 1000, 300)  # Max 5 minutes
+
+        try:
+            import asyncio
+
+            # Run command in working directory
+            process = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(session.working_dir),
+                env={**os.environ, "TERM": "xterm-256color"},
+            )
+
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=timeout_sec
+                )
+                exit_code = process.returncode or 0
+
+                # Combine stdout and stderr
+                output = ""
+                if stdout:
+                    output += stdout.decode("utf-8", errors="replace")
+                if stderr:
+                    if output:
+                        output += "\n"
+                    output += stderr.decode("utf-8", errors="replace")
+
+                await session.websocket.send(json.dumps({
+                    "type": "bash_output",
+                    "command": command,
+                    "output": output.strip() or "(no output)",
+                    "exitCode": exit_code,
+                    "isError": exit_code != 0,
+                    "timestamp": int(time.time() * 1000),
+                }))
+
+            except asyncio.TimeoutError:
+                process.kill()
+                await session.websocket.send(json.dumps({
+                    "type": "bash_output",
+                    "command": command,
+                    "output": f"Error: Command timed out after {timeout_sec}s",
+                    "exitCode": 124,  # Standard timeout exit code
+                    "isError": True,
+                    "timestamp": int(time.time() * 1000),
+                }))
+
+        except Exception as e:
+            logger.error(f"Bash execution error: {e}")
+            await session.websocket.send(json.dumps({
+                "type": "bash_output",
+                "command": command,
+                "output": f"Error: {str(e)}",
+                "exitCode": 1,
+                "isError": True,
+                "timestamp": int(time.time() * 1000),
+            }))
+
     def _resolve_safe_path(self, session: Session, path: str) -> Optional[Path]:
         """Resolve a path safely within the working directory.
 
