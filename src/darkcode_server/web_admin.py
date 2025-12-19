@@ -556,58 +556,15 @@ class WebAdminHandler:
                     session_cookie = self._generate_session_cookie()
                     WebAdminHandler._authenticated_sessions.add(session_cookie)
                     logging.info(f"Login successful, setting cookie: {session_cookie[:8]}...")
-                    # Return HTML page that sets cookie via JS then redirects
-                    # Uses multiple methods to ensure cookie is set before redirect
-                    redirect_html = f'''<!DOCTYPE html>
-<html>
-<head>
-    <title>Redirecting...</title>
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-    <meta http-equiv="Pragma" content="no-cache">
-    <meta http-equiv="Expires" content="0">
-</head>
-<body style="background:#0a0a0f;color:#e0e0e0;font-family:monospace;display:flex;justify-content:center;align-items:center;height:100vh;">
-<div style="text-align:center;">
-<p id="status">Setting session...</p>
-</div>
-<script>
-try {{
-    // Set the cookie
-    var cookieStr = "darkcode_admin_session={session_cookie}; path=/; max-age=86400; SameSite=Lax";
-    document.cookie = cookieStr;
-    console.log("Cookie set:", cookieStr);
-    console.log("All cookies:", document.cookie);
-
-    // Verify cookie was set
-    if (document.cookie.indexOf("darkcode_admin_session") === -1) {{
-        document.getElementById("status").innerText = "Error: Cookie could not be set. Check browser settings.";
-        console.error("Cookie was not set!");
-    }} else {{
-        document.getElementById("status").innerText = "Success! Redirecting...";
-        // Use replace to avoid back-button issues
-        setTimeout(function() {{
-            window.location.replace("/admin");
-        }}, 100);
-    }}
-}} catch(e) {{
-    document.getElementById("status").innerText = "Error: " + e.message;
-    console.error("Cookie error:", e);
-}}
-</script>
-<noscript>
-    <p>JavaScript is required. Please enable JavaScript and refresh.</p>
-</noscript>
-</body>
-</html>'''
+                    # Use HTTP 302 redirect with Set-Cookie header
                     return (
-                        200,
+                        302,
                         {
-                            'Content-Type': 'text/html; charset=utf-8',
-                            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-                            'Pragma': 'no-cache',
-                            'Expires': '0'
+                            'Location': '/admin',
+                            'Set-Cookie': f'darkcode_admin_session={session_cookie}; Path=/; Max-Age=86400; SameSite=Lax',
+                            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
                         },
-                        redirect_html.encode('utf-8')
+                        b''
                     )
                 else:
                     logging.warning(f"Login failed - PIN mismatch")
