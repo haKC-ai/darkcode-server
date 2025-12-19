@@ -427,10 +427,16 @@ DASHBOARD_CONTENT = """
             alert('Token copied to clipboard');
         }});
     }}
-    // Set session cookie if passed via URL (websockets doesn't support Set-Cookie properly)
-    {session_script}
-    // Auto-refresh dashboard every 5 seconds
-    setTimeout(() => location.reload(), 5000);
+    // Session token for URL-based auth (websockets doesn't support cookies properly)
+    const SESSION_TOKEN = '{session_token}';
+    // Auto-refresh dashboard every 5 seconds, preserving session in URL
+    setTimeout(() => {{
+        if (SESSION_TOKEN) {{
+            window.location.href = '/admin?session=' + SESSION_TOKEN;
+        }} else {{
+            location.reload();
+        }}
+    }}, 5000);
 </script>
 """
 
@@ -690,20 +696,6 @@ class WebAdminHandler:
             </div>
             '''
 
-        # Build session script for cookie setting
-        session_script = ''
-        if session_token:
-            session_script = f'''
-    (function() {{
-        document.cookie = 'darkcode_admin_session={session_token}; path=/; max-age=86400; SameSite=Lax';
-        // Clean URL by removing session param
-        if (window.history.replaceState) {{
-            const url = new URL(window.location);
-            url.searchParams.delete('session');
-            window.history.replaceState({{}}, '', url);
-        }}
-    }})();'''
-
         content = DASHBOARD_CONTENT.format(
             ascii_logo=html.escape(ASCII_LOGO),
             uptime=uptime,
@@ -722,7 +714,7 @@ class WebAdminHandler:
             local_ip=local_ip,
             tailscale_row=tailscale_row,
             ws_url=ws_url,
-            session_script=session_script,
+            session_token=session_token or '',
         )
 
         page = ADMIN_HTML.format(content=content)
