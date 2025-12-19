@@ -25,7 +25,7 @@ def show_header():
 
         banner_paths = [
             Path("/Users/0xdeadbeef/Desktop/darkcode.txt"),
-            Path.home() / ".darkcode" / "banner.txt",
+            Path.home() / "darkcode" / ".darkcode" / "banner.txt",
             Path(__file__).parent / "assets" / "banner.txt",
         ]
         banner_file = next((p for p in banner_paths if p.exists()), None)

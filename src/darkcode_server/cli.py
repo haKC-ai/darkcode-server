@@ -35,7 +35,7 @@ def show_banner():
         # Try custom banner file locations
         banner_paths = [
             Path("/Users/0xdeadbeef/Desktop/darkcode.txt"),  # Primary custom
-            Path.home() / ".darkcode" / "banner.txt",
+            Path.home() / "darkcode" / ".darkcode" / "banner.txt",
             Path(__file__).parent / "assets" / "banner.txt",
         ]
 
@@ -791,7 +791,10 @@ def start(port, token, working_dir, browse_dir, name, local_only, no_banner, no_
         show_banner()
 
     # Check if first run (no config exists)
-    config_file = Path.home() / ".darkcode" / ".env"
+    # Check both new and legacy config locations
+    new_config_file = Path.home() / "darkcode" / ".darkcode" / ".env"
+    legacy_config_file = Path.home() / ".darkcode" / ".env"
+    config_file = new_config_file if new_config_file.exists() else legacy_config_file
     first_run = not config_file.exists()
 
     config = ServerConfig.load()

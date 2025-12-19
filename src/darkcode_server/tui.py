@@ -22,7 +22,7 @@ def show_banner():
         # Try custom banner file locations
         banner_paths = [
             Path("/Users/0xdeadbeef/Desktop/darkcode.txt"),  # Primary custom
-            Path.home() / ".darkcode" / "banner.txt",
+            Path.home() / "darkcode" / ".darkcode" / "banner.txt",
             Path(__file__).parent / "assets" / "banner.txt",
         ]
 
@@ -270,7 +270,7 @@ class DarkCodeTUI:
         # Try to load from file first
         banner_paths = [
             Path("/Users/0xdeadbeef/Desktop/tui_banner.txt"),
-            Path.home() / ".darkcode" / "tui_banner.txt",
+            Path.home() / "darkcode" / ".darkcode" / "tui_banner.txt",
         ]
 
         for path in banner_paths:

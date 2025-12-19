@@ -21,6 +21,16 @@ def get_hostname() -> str:
     return socket.gethostname()
 
 
+def get_default_working_dir() -> Path:
+    """Get the default working directory (~/darkcode).
+
+    Creates the directory if it doesn't exist.
+    """
+    darkcode_dir = Path.home() / "darkcode"
+    darkcode_dir.mkdir(parents=True, exist_ok=True)
+    return darkcode_dir
+
+
 class ServerConfig(BaseSettings):
     """Server configuration with environment variable support."""
 
@@ -35,7 +45,7 @@ class ServerConfig(BaseSettings):
     port: int = Field(default=3100, description="WebSocket server port")
     host: str = Field(default="0.0.0.0", description="Bind address (use 127.0.0.1 for local only)")
     token: str = Field(default_factory=get_default_token, description="Auth token")
-    working_dir: Path = Field(default_factory=Path.home, description="Working directory for Claude")
+    working_dir: Path = Field(default_factory=get_default_working_dir, description="Working directory for Claude (default: ~/darkcode)")
     browse_dir: Optional[Path] = Field(default=None, description="Default directory for app file browser (defaults to working_dir)")
     server_name: str = Field(default_factory=get_hostname, description="Server display name")
 
@@ -117,17 +127,17 @@ class ServerConfig(BaseSettings):
     ping_interval: int = Field(default=30, description="Ping interval in seconds")
     ping_timeout: int = Field(default=10, description="Ping timeout in seconds")
 
-    # Paths
+    # Paths - all config stored in ~/darkcode/.darkcode
     config_dir: Path = Field(
-        default_factory=lambda: Path.home() / ".darkcode",
-        description="Config directory",
+        default_factory=lambda: Path.home() / "darkcode" / ".darkcode",
+        description="Config directory (~/darkcode/.darkcode)",
     )
     log_dir: Path = Field(
-        default_factory=lambda: Path.home() / ".darkcode" / "logs",
+        default_factory=lambda: Path.home() / "darkcode" / ".darkcode" / "logs",
         description="Log directory",
     )
     sessions_dir: Path = Field(
-        default_factory=lambda: Path.home() / ".darkcode" / "sessions",
+        default_factory=lambda: Path.home() / "darkcode" / ".darkcode" / "sessions",
         description="Sessions directory",
     )
 
@@ -173,12 +183,24 @@ class ServerConfig(BaseSettings):
 
     @classmethod
     def load(cls) -> "ServerConfig":
-        """Load configuration from file."""
-        config_dir = Path.home() / ".darkcode"
-        env_file = config_dir / ".env"
+        """Load configuration from file.
 
-        if env_file.exists():
-            return cls(_env_file=str(env_file))
+        Checks both new location (~/darkcode/.darkcode/.env) and
+        legacy location (~/.darkcode/.env) for backwards compatibility.
+        """
+        # New location: ~/darkcode/.darkcode/.env
+        new_config_dir = Path.home() / "darkcode" / ".darkcode"
+        new_env_file = new_config_dir / ".env"
+
+        # Legacy location: ~/.darkcode/.env
+        legacy_config_dir = Path.home() / ".darkcode"
+        legacy_env_file = legacy_config_dir / ".env"
+
+        if new_env_file.exists():
+            return cls(_env_file=str(new_env_file))
+        elif legacy_env_file.exists():
+            # Load from legacy location but config will save to new location
+            return cls(_env_file=str(legacy_env_file))
         return cls()
 
     def get_local_ips(self) -> list[dict]:

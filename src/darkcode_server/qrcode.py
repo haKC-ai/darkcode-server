@@ -61,7 +61,7 @@ def generate_deep_link(config: ServerConfig, mode: str = "direct", cert_fingerpr
 
 def get_cert_fingerprint(config: ServerConfig) -> Optional[str]:
     """Get or generate the server's TLS certificate fingerprint."""
-    cert_dir = Path.home() / ".darkcode" / "certs"
+    cert_dir = Path.home() / "darkcode" / ".darkcode" / "certs"
     cert_manager = CertificateManager(cert_dir)
 
     # Get local IPs for SAN
