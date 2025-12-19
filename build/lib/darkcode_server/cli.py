@@ -354,11 +354,48 @@ def menu_start_server():
         console.print(f"\n[red]Error: {e}[/]")
 
 
-async def _run_server(server: DarkCodeServer):
-    """Run the server until interrupted."""
+async def _run_server(server: DarkCodeServer, show_status: bool = True):
+    """Run the server until interrupted with live status display."""
+    import time
+    from datetime import timedelta
+
     await server.start()
+    start_time = time.time()
+
     try:
-        await asyncio.Future()  # Run forever
+        if show_status:
+            # Create a live status display that updates periodically
+            status_table = Table(show_header=False, box=None, padding=(0, 1))
+            status_table.add_column("", style="green", width=2)
+            status_table.add_column("", style="dim")
+
+            with Live(console=console, refresh_per_second=1, transient=False) as live:
+                while True:
+                    # Calculate uptime
+                    uptime_secs = int(time.time() - start_time)
+                    uptime = str(timedelta(seconds=uptime_secs))
+
+                    # Get session count from server
+                    session_count = len(server.sessions) if hasattr(server, 'sessions') else 0
+                    state = server.state.value if hasattr(server, 'state') else "running"
+
+                    # Build status display
+                    status_text = Text()
+                    status_text.append("[*] ", style="bold green")
+                    status_text.append("DARKCODE SERVER RUNNING", style="bold green")
+                    status_text.append("  |  ", style="dim")
+                    status_text.append(f"{uptime}", style="cyan")
+                    status_text.append("  |  ", style="dim")
+                    status_text.append(f"{session_count} session{'s' if session_count != 1 else ''}", style="yellow")
+                    status_text.append("  |  ", style="dim")
+                    status_text.append(f"{state}", style="magenta")
+                    status_text.append("  |  ", style="dim")
+                    status_text.append("Ctrl+C to stop", style="dim italic")
+
+                    live.update(status_text)
+                    await asyncio.sleep(1)
+        else:
+            await asyncio.Future()  # Run forever without status
     finally:
         await server.stop()
 
@@ -656,86 +693,70 @@ def main(ctx, version, classic):
         return
 
     if ctx.invoked_subcommand is None:
-        show_banner()
-
         if classic:
             # Use old menu if explicitly requested
+            show_banner()
             interactive_menu()
         else:
-            # Default to modern prompt_toolkit dialogs with dropdowns
+            # Default to arrow-key navigation menu using prompt_toolkit
             try:
                 from darkcode_server.prompt_ui import run_interactive_menu
                 result = run_interactive_menu()
                 if result:
-                    action, mode = result
+                    action, data = result
                     if action == "start":
-                        # Start server with selected mode
+                        # data is a dict with mode, port, working_dir, no_web, save
                         config = ServerConfig.load()
-                        if mode == "ssh":
-                            config.local_only = True
-                        else:
-                            config.local_only = False
-                        # Call the start command logic
-                        ctx.invoke(start, local_only=config.local_only, no_banner=True)
-                    elif action == "status":
-                        menu_status()
-                    elif action == "qr":
-                        menu_qr_code()
-                    elif action == "guest":
-                        menu_guest_codes()
-                    elif action == "guest_create":
-                        from darkcode_server.prompt_ui import show_guest_create_dialog
-                        guest_data = show_guest_create_dialog()
-                        if guest_data:
-                            from darkcode_server.security import GuestAccessManager
-                            config = ServerConfig.load()
-                            guest_mgr = GuestAccessManager(config.config_dir / "guests.db")
-                            result = guest_mgr.create_guest_code(**guest_data)
-                            console.print(f"\n[green]Guest code created:[/] [bold]{result['code']}[/]")
-                            Prompt.ask("\n[dim]Press Enter to continue[/]")
-                    elif action == "guest_list":
-                        from click.testing import CliRunner
-                        runner = CliRunner()
-                        runner.invoke(guest_list, [], standalone_mode=False)
-                        Prompt.ask("\n[dim]Press Enter to continue[/]")
-                    elif action == "guest_revoke":
-                        code = Prompt.ask("[cyan]Code to revoke[/]")
-                        from click.testing import CliRunner
-                        runner = CliRunner()
-                        runner.invoke(guest_revoke, [code], standalone_mode=False)
-                        Prompt.ask("\n[dim]Press Enter to continue[/]")
-                    elif action == "guest_qr":
-                        code = Prompt.ask("[cyan]Code for QR[/]")
-                        from click.testing import CliRunner
-                        runner = CliRunner()
-                        runner.invoke(guest_qr, [code], standalone_mode=False)
-                        Prompt.ask("\n[dim]Press Enter to continue[/]")
-                    elif action == "config":
-                        menu_config()
-                    elif action == "security":
-                        menu_security()
+                        local_only = data.get("mode") == "ssh"
+                        port = data.get("port", config.port)
+                        working_dir = data.get("working_dir", str(config.working_dir))
+                        no_web = data.get("no_web", False)
+                        if data.get("save"):
+                            config.port = port
+                            config.working_dir = Path(working_dir)
+                            config.save()
+                        ctx.invoke(start, port=port, working_dir=working_dir, local_only=local_only, no_web=no_web, no_banner=True)
+                    elif action == "daemon_foreground":
+                        ctx.invoke(daemon, detach=False)
+                    elif action == "daemon_background":
+                        ctx.invoke(daemon, detach=True)
+                    elif action == "daemon_stop":
+                        ctx.invoke(stop)
                     elif action == "setup":
                         setup_wizard_menu()
-                    elif action == "install_tailscale":
-                        prompt_install_tailscale()
+                    elif action == "install":
+                        ctx.invoke(install)
+                    elif action == "uninstall":
+                        ctx.invoke(uninstall)
+                    elif action == "rotate_token":
+                        ctx.invoke(rotate_token)
+                    elif action == "client_cert":
+                        device_id = data
+                        ctx.invoke(client_cert, device_id=device_id)
             except ImportError as e:
-                console.print(f"[yellow]Interactive dialogs require prompt_toolkit. Falling back to classic menu.[/]")
+                console.print(f"[yellow]prompt_toolkit not installed. Falling back to classic menu.[/]")
                 console.print(f"[dim]Install with: pip install prompt_toolkit[/]")
+                show_banner()
                 interactive_menu()
             except Exception as e:
-                console.print(f"[yellow]Dialog error: {e}. Falling back to classic menu.[/]")
+                import traceback
+                console.print(f"[yellow]Menu error: {e}[/]")
+                console.print(f"[dim]{traceback.format_exc()}[/]")
+                show_banner()
                 interactive_menu()
 
 
 @main.command()
 @click.option("--port", "-p", type=int, envvar="DARKCODE_PORT", help="Server port (default: 3100, env: DARKCODE_PORT)")
 @click.option("--token", "-t", envvar="DARKCODE_TOKEN", help="Auth token (env: DARKCODE_TOKEN)")
-@click.option("--working-dir", "-d", type=click.Path(exists=True), envvar="DARKCODE_WORKING_DIR", help="Working directory (env: DARKCODE_WORKING_DIR)")
+@click.option("--working-dir", "-d", type=click.Path(exists=True), envvar="DARKCODE_WORKING_DIR", help="Working directory for Claude (env: DARKCODE_WORKING_DIR)")
+@click.option("--browse-dir", "-b", type=click.Path(exists=True), envvar="DARKCODE_BROWSE_DIR", help="Default directory for app file browser (env: DARKCODE_BROWSE_DIR)")
 @click.option("--name", "-n", envvar="DARKCODE_SERVER_NAME", help="Server display name")
 @click.option("--local-only", "-l", is_flag=True, envvar="DARKCODE_LOCAL_ONLY", help="Only accept localhost connections (use with SSH tunnel)")
 @click.option("--no-banner", is_flag=True, help="Skip banner animation")
+@click.option("--no-web", is_flag=True, envvar="DARKCODE_NO_WEB", help="Disable web admin dashboard")
 @click.option("--save", "-s", is_flag=True, help="Save options to config file")
-def start(port, token, working_dir, name, local_only, no_banner, save):
+def start(port, token, working_dir, browse_dir, name, local_only, no_banner, no_web, save):
     """Start the DarkCode server.
 
     CONNECTION MODES:
@@ -782,10 +803,14 @@ def start(port, token, working_dir, name, local_only, no_banner, save):
         config.token = token
     if working_dir:
         config.working_dir = Path(working_dir)
+    if browse_dir:
+        config.browse_dir = Path(browse_dir)
     if name:
         config.server_name = name
     if local_only:
         config.local_only = True
+    if no_web:
+        config.web_admin_disabled = True
 
     # Auto-save on first run or if requested
     if first_run or save:
@@ -843,6 +868,24 @@ def start(port, token, working_dir, name, local_only, no_banner, save):
             ))
 
     console.print(f"\n[green]Server listening on {config.bind_host}:{config.port}[/]")
+
+    # Show admin URL and PIN (unless disabled)
+    if not config.web_admin_disabled:
+        local_ips = config.get_local_ips()
+        local_ip = local_ips[0]["address"] if local_ips else "127.0.0.1"
+        protocol = "https" if config.tls_enabled else "http"
+        console.print(f"[cyan]Web Admin:[/] {protocol}://{local_ip}:{config.port}/admin")
+
+        # Get and display web PIN
+        try:
+            from darkcode_server.web_admin import WebAdminHandler
+            web_pin = WebAdminHandler.get_web_pin()
+            console.print(f"[cyan]Web PIN:[/] [bold yellow]{web_pin}[/]")
+        except ImportError:
+            pass
+    else:
+        console.print("[dim]Web Admin: disabled (--no-web)[/]")
+
     console.print("[dim]Press Ctrl+C to stop[/]\n")
 
     server = DarkCodeServer(config)

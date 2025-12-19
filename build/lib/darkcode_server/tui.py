@@ -681,7 +681,7 @@ class DarkCodeTUI:
             elif key == "qr":
                 icon = "◫"
             elif key == "security":
-                icon = "🔒"
+                icon = "◆"
             elif key == "config":
                 icon = "⚙"
             elif key == "setup":

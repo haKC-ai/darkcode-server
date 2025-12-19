@@ -1,13 +1,13 @@
-"""Interactive menu using simple-term-menu for arrow key navigation."""
+"""Interactive menu using prompt_toolkit for arrow key navigation."""
 
 import os
 import sys
-from typing import Optional, Tuple
+from pathlib import Path
+from typing import Optional, Tuple, List, Any
 
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
-from rich.prompt import Prompt, Confirm
-from simple_term_menu import TerminalMenu
+from rich.table import Table
 
 console = Console()
 
@@ -18,11 +18,27 @@ def clear_screen():
 
 
 def show_header():
-    """Show minimal app header."""
-    console.print()
-    console.print("[bold magenta]DARKCODE SERVER[/]", justify="center")
-    console.print("[dim]Remote Claude Code Control[/]", justify="center")
-    console.print()
+    """Show app header with ASCII banner."""
+    try:
+        from hakcer import show_banner as hakcer_banner, set_theme
+        set_theme("synthwave")
+
+        banner_paths = [
+            Path("/Users/0xdeadbeef/Desktop/darkcode.txt"),
+            Path.home() / ".darkcode" / "banner.txt",
+            Path(__file__).parent / "assets" / "banner.txt",
+        ]
+        banner_file = next((p for p in banner_paths if p.exists()), None)
+
+        if banner_file:
+            hakcer_banner(custom_file=str(banner_file), effect_name="rain", hold_time=0.3)
+        else:
+            hakcer_banner(text="DARKCODE", effect_name="glitch", hold_time=0.2)
+    except ImportError:
+        console.print()
+        console.print("[bold magenta]DARKCODE SERVER[/]", justify="center")
+        console.print("[dim]Remote Claude Code Control[/]", justify="center")
+        console.print()
 
 
 def fancy_progress(description: str, steps: int = 10):
@@ -37,167 +53,409 @@ def fancy_progress(description: str, steps: int = 10):
     ) as progress:
         task = progress.add_task(description, total=steps)
         for _ in range(steps):
-            time.sleep(0.05)
+            time.sleep(0.03)
             progress.advance(task)
 
 
-def show_menu(title: str, options: list, back_option: bool = False) -> Optional[str]:
-    """Show a menu with arrow key navigation.
+def get_random_theme_colors() -> dict:
+    """Get colors from a random hakcer theme."""
+    import random
+    try:
+        from hakcer import THEMES, list_themes
+        theme_names = list_themes()
+        theme_name = random.choice(theme_names)
+        theme = THEMES[theme_name]
+        colors = theme['colors']
+        # Return primary colors for menu styling
+        return {
+            'title': f"#{colors['primary'][0]}",
+            'selected': f"#{colors['primary'][1]}",
+            'option': f"#{colors['accent'][0]}" if colors.get('accent') else '#888888',
+            'hint': '#555555',
+        }
+    except ImportError:
+        # Fallback if hakcer not installed
+        return {
+            'title': '#00D9FF',
+            'selected': '#FF10F0',
+            'option': '#888888',
+            'hint': '#555555',
+        }
+
+
+def prompt_menu(title: str, options: List[Tuple[str, str]], back_option: bool = True) -> Optional[str]:
+    """Show a menu using prompt_toolkit with arrow key navigation.
 
     Args:
         title: Menu title
-        options: List of (key, value, description) tuples
-        back_option: Whether to show a back option
+        options: List of (value, display_text) tuples
+        back_option: Whether to include back/quit option
 
     Returns:
-        Selected value or None if back/quit/escape
+        Selected value or None if back/quit
     """
-    console.print(f"\n[bold cyan]{title}[/]\n")
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.keys import Keys
+    from prompt_toolkit.application import Application
+    from prompt_toolkit.layout import Layout
+    from prompt_toolkit.layout.containers import Window
+    from prompt_toolkit.layout.controls import FormattedTextControl
+    from prompt_toolkit.styles import Style
 
-    # Build menu entries
-    entries = [f"[{key}] {desc}" for key, value, desc in options]
     if back_option:
-        entries.append("[b] Back")
+        options = options + [("__back__", "[q] Back / Quit")]
 
-    # Create terminal menu with styling
-    menu = TerminalMenu(
-        entries,
-        menu_cursor="▸ ",
-        menu_cursor_style=("fg_cyan", "bold"),
-        menu_highlight_style=("fg_green", "bold"),
-        cycle_cursor=True,
-        clear_screen=False,
+    selected_index = [0]
+    result = [None]
+
+    # Get random theme colors for this menu
+    theme_colors = get_random_theme_colors()
+
+    kb = KeyBindings()
+
+    @kb.add(Keys.Up)
+    @kb.add('k')
+    def move_up(event):
+        selected_index[0] = (selected_index[0] - 1) % len(options)
+
+    @kb.add(Keys.Down)
+    @kb.add('j')
+    def move_down(event):
+        selected_index[0] = (selected_index[0] + 1) % len(options)
+
+    @kb.add(Keys.Enter)
+    def select(event):
+        result[0] = options[selected_index[0]][0]
+        event.app.exit()
+
+    @kb.add('q')
+    @kb.add(Keys.Escape)
+    def quit_menu(event):
+        result[0] = "__back__"
+        event.app.exit()
+
+    # Number key shortcuts
+    for i in range(min(9, len(options))):
+        num = str(i + 1)
+        @kb.add(num)
+        def select_num(event, idx=i):
+            if idx < len(options):
+                result[0] = options[idx][0]
+                event.app.exit()
+
+    def get_menu_text():
+        lines = [('class:title', f'\n  {title}\n\n')]
+        for i, (value, text) in enumerate(options):
+            if i == selected_index[0]:
+                lines.append(('class:selected', f'  > {text}\n'))
+            else:
+                lines.append(('class:option', f'    {text}\n'))
+        lines.append(('class:hint', '\n  [arrows/jk] navigate  [enter] select  [q/esc] back\n'))
+        return lines
+
+    style = Style.from_dict({
+        'title': f"bold {theme_colors['title']}",
+        'selected': f"bold {theme_colors['selected']}",
+        'option': theme_colors['option'],
+        'hint': f"italic {theme_colors['hint']}",
+    })
+
+    layout = Layout(
+        Window(content=FormattedTextControl(get_menu_text))
     )
 
-    idx = menu.show()
+    app = Application(layout=layout, key_bindings=kb, full_screen=False, style=style)
+    app.run()
 
-    if idx is None:
+    if result[0] == "__back__":
         return None
+    return result[0]
 
-    if back_option and idx == len(options):
-        return None
 
-    return options[idx][1] if idx < len(options) else None
+def prompt_input(label: str, default: str = "") -> str:
+    """Prompt for text input."""
+    from prompt_toolkit import prompt
+    from prompt_toolkit.styles import Style
 
+    style = Style.from_dict({'': 'cyan'})
+    return prompt(f"  {label}: ", default=default, style=style)
+
+
+def prompt_confirm(message: str, default: bool = False) -> bool:
+    """Prompt for yes/no confirmation."""
+    from prompt_toolkit import prompt
+    hint = "[Y/n]" if default else "[y/N]"
+    response = prompt(f"  {message} {hint}: ").strip().lower()
+    if not response:
+        return default
+    return response in ('y', 'yes')
+
+
+def show_status_table(data: dict):
+    """Display status information as a clean table."""
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Key", style="cyan")
+    table.add_column("Value", style="white")
+
+    for key, value in data.items():
+        table.add_row(key, str(value))
+
+    console.print()
+    console.print(table)
+    console.print()
+
+
+# ============================================================================
+# MAIN MENU
+# ============================================================================
 
 def show_main_menu() -> Optional[str]:
-    """Show main menu and get selection."""
+    """Show the main menu."""
     options = [
-        ("1", "start", "Start Server"),
-        ("2", "status", "Server Status"),
-        ("3", "qr", "Show QR Code"),
-        ("4", "guest", "Guest Codes"),
-        ("5", "config", "Configuration"),
-        ("6", "security", "Security Settings"),
-        ("7", "setup", "Setup Wizard"),
-        ("q", "quit", "Quit"),
+        ("start", "[1] Start Server"),
+        ("daemon", "[2] Daemon Mode"),
+        ("status", "[3] Server Status"),
+        ("qr", "[4] Show QR Code"),
+        ("guest", "[5] Guest Codes"),
+        ("security", "[6] Security"),
+        ("config", "[7] Configuration"),
+        ("logs", "[8] View Logs"),
+        ("service", "[9] System Service"),
     ]
-
-    result = show_menu("Main Menu", options)
-    return None if result == "quit" else result
+    return prompt_menu("Main Menu", options)
 
 
-def show_connection_menu() -> Optional[str]:
-    """Show connection mode selection."""
+# ============================================================================
+# START SERVER
+# ============================================================================
+
+def show_start_menu() -> Optional[dict]:
+    """Show start server options and return configuration."""
     from darkcode_server.config import ServerConfig
     config = ServerConfig.load()
 
+    # Connection mode
     tailscale_ip = config.get_tailscale_ip()
 
-    options = [
-        ("1", "direct", "Direct LAN - Local network connection"),
+    mode_options = [
+        ("direct", "[1] Direct LAN - Local network"),
     ]
-
     if tailscale_ip:
-        options.append(("2", "tailscale", f"Tailscale ({tailscale_ip}) - Secure mesh VPN"))
+        mode_options.append(("tailscale", f"[2] Tailscale ({tailscale_ip})"))
     else:
-        options.append(("2", "tailscale_disabled", "Tailscale - Not detected"))
+        mode_options.append(("tailscale_na", "[2] Tailscale (not detected)"))
+    mode_options.append(("ssh", "[3] SSH Tunnel - Localhost only"))
 
-    options.append(("3", "ssh", "SSH Tunnel - Localhost only, most secure"))
-
-    result = show_menu("Connection Mode", options, back_option=True)
-
-    if result == "tailscale_disabled":
-        console.print("\n[yellow]Tailscale not detected. Install from tailscale.com[/]")
-        Prompt.ask("\n[dim]Press Enter to continue[/]")
+    mode = prompt_menu("Connection Mode", mode_options)
+    if mode is None or mode == "tailscale_na":
         return None
 
-    return result
+    # Additional options
+    console.print()
+    console.print("[cyan]  Server Options[/]")
+    console.print()
 
+    port = prompt_input("Port", str(config.port))
+    working_dir = prompt_input("Working directory", str(config.working_dir))
+    no_web = prompt_confirm("Disable web admin?", default=False)
+    save_config = prompt_confirm("Save these settings?", default=False)
+
+    return {
+        "mode": mode,
+        "port": int(port) if port else config.port,
+        "working_dir": working_dir or str(config.working_dir),
+        "no_web": no_web,
+        "save": save_config,
+    }
+
+
+def show_daemon_menu() -> Optional[dict]:
+    """Show daemon options."""
+    options = [
+        ("foreground", "[1] Start in foreground"),
+        ("background", "[2] Start in background (detach)"),
+        ("stop", "[3] Stop running daemon"),
+    ]
+    return prompt_menu("Daemon Mode", options)
+
+
+# ============================================================================
+# GUEST CODES
+# ============================================================================
 
 def show_guest_menu() -> Optional[str]:
     """Show guest code management menu."""
     options = [
-        ("1", "guest_create", "Create New Code"),
-        ("2", "guest_list", "List All Codes"),
-        ("3", "guest_revoke", "Revoke a Code"),
-        ("4", "guest_qr", "Show QR for Code"),
+        ("create", "[1] Create Guest Code"),
+        ("list", "[2] List All Codes"),
+        ("revoke", "[3] Revoke a Code"),
+        ("qr", "[4] Show QR for Code"),
     ]
+    return prompt_menu("Guest Access", options)
 
-    return show_menu("Guest Access", options, back_option=True)
 
+def show_guest_create_form() -> Optional[dict]:
+    """Show form to create a guest code."""
+    console.print()
+    console.print("[cyan]  Create Guest Code[/]")
+    console.print()
+
+    name = prompt_input("Friend's name")
+    if not name:
+        return None
+
+    expires = prompt_input("Expires in hours (0=never)", "24")
+    max_uses = prompt_input("Max uses (empty=unlimited)", "")
+
+    perm_options = [
+        ("full", "[1] Full access"),
+        ("read_only", "[2] Read-only"),
+    ]
+    permission = prompt_menu("Permission Level", perm_options, back_option=False)
+
+    return {
+        "name": name,
+        "expires_hours": int(expires) if expires and expires != "0" else None,
+        "max_uses": int(max_uses) if max_uses else None,
+        "permission_level": permission or "full",
+    }
+
+
+# ============================================================================
+# SECURITY
+# ============================================================================
 
 def show_security_menu() -> Optional[str]:
     """Show security settings menu."""
     from darkcode_server.config import ServerConfig
     config = ServerConfig.load()
 
-    # Show current status first
+    # Show current status inline
     console.print()
-    console.print("[bold]Current Security Status[/]")
     tls = "[green]ON[/]" if config.tls_enabled else "[yellow]OFF[/]"
     mtls = "[green]ON[/]" if config.mtls_enabled else "[dim]OFF[/]"
-    device_lock = "[green]ON[/]" if config.device_lock else "[yellow]OFF[/]"
+    lock = "[green]ON[/]" if config.device_lock else "[yellow]OFF[/]"
     bound = config.bound_device_id[:12] + "..." if config.bound_device_id else "[dim]none[/]"
 
-    console.print(f"  TLS: {tls}  |  mTLS: {mtls}  |  Device Lock: {device_lock}")
+    console.print(f"  TLS: {tls}  |  mTLS: {mtls}  |  Device Lock: {lock}")
     console.print(f"  Bound Device: {bound}")
 
     options = [
-        ("1", "security_tls", f"Toggle TLS (currently {'ON' if config.tls_enabled else 'OFF'})"),
-        ("2", "security_mtls", f"Toggle mTLS (currently {'ON' if config.mtls_enabled else 'OFF'})"),
-        ("3", "security_device_lock", f"Toggle Device Lock (currently {'ON' if config.device_lock else 'OFF'})"),
-        ("4", "security_reset_token", "Reset Auth Token"),
-        ("5", "security_blocked", "View Blocked IPs"),
-        ("6", "security_unbind", "Unbind Device"),
+        ("status", "[1] Full Security Status"),
+        ("tls", f"[2] Toggle TLS ({'ON' if config.tls_enabled else 'OFF'})"),
+        ("mtls", f"[3] Toggle mTLS ({'ON' if config.mtls_enabled else 'OFF'})"),
+        ("device_lock", f"[4] Toggle Device Lock ({'ON' if config.device_lock else 'OFF'})"),
+        ("unbind", "[5] Unbind Device"),
+        ("reset_token", "[6] Reset Auth Token"),
+        ("rotate_token", "[7] Rotate Token (scheduled)"),
+        ("blocked", "[8] View Blocked IPs"),
+        ("client_cert", "[9] Generate Client Certificate"),
     ]
+    return prompt_menu("Security", options)
 
-    return show_menu("Security Settings", options, back_option=True)
+
+def show_tls_menu() -> Optional[dict]:
+    """Show TLS configuration options."""
+    options = [
+        ("enable", "[1] Enable TLS"),
+        ("disable", "[2] Disable TLS"),
+        ("mtls_enable", "[3] Enable mTLS (client certs)"),
+        ("mtls_disable", "[4] Disable mTLS"),
+        ("regenerate", "[5] Regenerate Certificates"),
+    ]
+    return prompt_menu("TLS Configuration", options)
 
 
-def execute_action(action: str) -> bool:
-    """Execute an action. Returns True to continue, False to exit."""
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+
+def show_config_menu() -> Optional[str]:
+    """Show configuration menu."""
+    options = [
+        ("view", "[1] View Current Config"),
+        ("edit", "[2] Edit Configuration"),
+        ("token", "[3] Show Auth Token"),
+        ("init", "[4] Re-initialize Config"),
+    ]
+    return prompt_menu("Configuration", options)
+
+
+def show_config_edit_form() -> Optional[dict]:
+    """Show configuration edit form."""
+    from darkcode_server.config import ServerConfig
+    config = ServerConfig.load()
+
+    console.print()
+    console.print("[cyan]  Edit Configuration[/]")
+    console.print()
+
+    port = prompt_input("Port", str(config.port))
+    working_dir = prompt_input("Working directory", str(config.working_dir))
+    server_name = prompt_input("Server name", config.server_name)
+    max_sessions = prompt_input("Max sessions per IP", str(config.max_sessions_per_ip))
+
+    if not prompt_confirm("Save changes?", default=True):
+        return None
+
+    return {
+        "port": int(port) if port else config.port,
+        "working_dir": working_dir,
+        "server_name": server_name,
+        "max_sessions_per_ip": int(max_sessions) if max_sessions else config.max_sessions_per_ip,
+    }
+
+
+# ============================================================================
+# SERVICE / SYSTEM
+# ============================================================================
+
+def show_service_menu() -> Optional[str]:
+    """Show system service options."""
+    options = [
+        ("install", "[1] Install as System Service"),
+        ("uninstall", "[2] Uninstall Service"),
+        ("setup", "[3] Run Setup Wizard"),
+    ]
+    return prompt_menu("System Service", options)
+
+
+# ============================================================================
+# ACTION HANDLERS
+# ============================================================================
+
+def execute_action(action: str, data: Any = None) -> bool:
+    """Execute an action and return True to continue or False to exit."""
     from darkcode_server.config import ServerConfig
 
     if action == "status":
         config = ServerConfig.load()
         fancy_progress("Loading status...", 5)
 
-        console.print()
-        console.print("[bold cyan]Server Status[/]")
-        console.print()
-        console.print(f"  Port:        [white]{config.port}[/]")
-        console.print(f"  Working Dir: [white]{config.working_dir}[/]")
-        console.print(f"  Server Name: [white]{config.server_name}[/]")
-        console.print(f"  TLS:         {'[green]enabled[/]' if config.tls_enabled else '[yellow]disabled[/]'}")
-        console.print(f"  Device Lock: {'[green]enabled[/]' if config.device_lock else '[yellow]disabled[/]'}")
-
         tailscale_ip = config.get_tailscale_ip()
-        console.print(f"  Tailscale:   {tailscale_ip if tailscale_ip else '[dim]not detected[/]'}")
+
+        show_status_table({
+            "Port": config.port,
+            "Working Dir": str(config.working_dir),
+            "Server Name": config.server_name,
+            "TLS": "enabled" if config.tls_enabled else "disabled",
+            "Device Lock": "enabled" if config.device_lock else "disabled",
+            "Tailscale": tailscale_ip or "not detected",
+        })
 
         # Check daemon
         try:
             from darkcode_server.daemon import DarkCodeDaemon
             pid = DarkCodeDaemon.get_running_pid(config)
             if pid:
-                console.print(f"\n  [green]Daemon running (PID {pid})[/]")
+                console.print(f"  [green]Daemon running (PID {pid})[/]")
             else:
-                console.print("\n  [dim]Daemon not running[/]")
-        except:
+                console.print("  [dim]Daemon not running[/]")
+        except Exception:
             pass
 
         console.print()
-        Prompt.ask("[dim]Press Enter to continue[/]")
+        prompt_input("Press Enter to continue", "")
         return True
 
     elif action == "qr":
@@ -207,69 +465,101 @@ def execute_action(action: str) -> bool:
         console.print()
         print_server_info(config, console)
         console.print()
-        Prompt.ask("[dim]Press Enter to continue[/]")
+        prompt_input("Press Enter to continue", "")
         return True
 
-    elif action == "config":
+    elif action == "token":
         config = ServerConfig.load()
-
         console.print()
-        console.print("[bold cyan]Current Configuration[/]")
+        console.print(f"  [cyan]Auth Token:[/] {config.token}")
         console.print()
-        console.print(f"  Port:            [white]{config.port}[/]")
-        console.print(f"  Working Dir:     [white]{config.working_dir}[/]")
-        console.print(f"  Server Name:     [white]{config.server_name}[/]")
-        console.print(f"  Config Dir:      [white]{config.config_dir}[/]")
-        console.print(f"  Token:           [white]{config.token[:4]}{'*' * 16}[/]")
-        console.print(f"  Max Sessions/IP: [white]{config.max_sessions_per_ip}[/]")
-        console.print()
-
-        if Confirm.ask("Edit configuration?", default=False):
-            new_port = Prompt.ask("Port", default=str(config.port))
-            new_dir = Prompt.ask("Working directory", default=str(config.working_dir))
-            new_name = Prompt.ask("Server name", default=config.server_name)
-
-            if new_port and new_dir and new_name:
-                from pathlib import Path
-                config.port = int(new_port)
-                config.working_dir = Path(new_dir)
-                config.server_name = new_name
-                config.save()
-
-                fancy_progress("Saving configuration...", 5)
-                console.print("\n[green]Configuration saved![/]")
-
-        Prompt.ask("[dim]Press Enter to continue[/]")
+        prompt_input("Press Enter to continue", "")
         return True
 
-    elif action == "guest_create":
-        console.print()
-        console.print("[bold green]Create Guest Code[/]")
-        console.print()
-
-        name = Prompt.ask("Friend's name")
-        if not name:
-            return True
-
-        expires = Prompt.ask("Expires in hours (0=never)", default="24")
-        max_uses = Prompt.ask("Max uses (empty=unlimited)", default="")
-        read_only = Confirm.ask("Read-only access?", default=False)
-
-        fancy_progress("Creating guest code...", 8)
-
+    elif action == "logs":
         config = ServerConfig.load()
-        from darkcode_server.security import GuestAccessManager
+        log_file = config.log_dir / "server.log"
 
-        guest_mgr = GuestAccessManager(config.config_dir / "guests.db")
-        result = guest_mgr.create_guest_code(
-            name=name,
-            permission_level="read_only" if read_only else "full",
-            expires_hours=int(expires) if expires != "0" else None,
-            max_uses=int(max_uses) if max_uses else None,
-        )
+        if not log_file.exists():
+            console.print("\n  [yellow]No logs found.[/]\n")
+        else:
+            console.print(f"\n  [cyan]Tailing {log_file}...[/]")
+            console.print("  [dim]Press Ctrl+C to stop[/]\n")
+            try:
+                import subprocess
+                subprocess.run(["tail", "-f", str(log_file)])
+            except KeyboardInterrupt:
+                pass
 
-        console.print(f"\n[green]Created![/] Code: [bold white]{result['code']}[/]")
-        Prompt.ask("[dim]Press Enter to continue[/]")
+        return True
+
+    elif action == "view_config":
+        config = ServerConfig.load()
+        show_status_table({
+            "Port": config.port,
+            "Working Dir": str(config.working_dir),
+            "Browse Dir": str(config.browse_dir) if config.browse_dir else "same as working",
+            "Server Name": config.server_name,
+            "Config Dir": str(config.config_dir),
+            "Token": config.token[:4] + "*" * 16,
+            "Max Sessions/IP": config.max_sessions_per_ip,
+            "TLS Enabled": config.tls_enabled,
+            "mTLS Enabled": config.mtls_enabled,
+            "Device Lock": config.device_lock,
+        })
+        prompt_input("Press Enter to continue", "")
+        return True
+
+    elif action == "security_status":
+        config = ServerConfig.load()
+        fancy_progress("Loading security status...", 5)
+
+        show_status_table({
+            "Device Lock": "enabled" if config.device_lock else "disabled",
+            "Bound Device": config.bound_device_id[:12] + "..." if config.bound_device_id else "none",
+            "Idle Timeout": f"{config.idle_timeout}s" if config.idle_timeout > 0 else "disabled",
+            "Local Only": "yes" if config.local_only else "no",
+            "Rate Limit": f"{config.rate_limit_attempts} attempts / {config.rate_limit_window}s",
+            "Max Sessions/IP": config.max_sessions_per_ip,
+            "TLS Enabled": "yes (wss://)" if config.tls_enabled else "no (ws://)",
+            "mTLS Enabled": "yes" if config.mtls_enabled else "no",
+            "Token Rotation": f"{config.token_rotation_days} days" if config.token_rotation_days > 0 else "disabled",
+        })
+
+        # Check certs
+        cert_dir = config.config_dir / "certs"
+        server_cert = cert_dir / "server.crt"
+        console.print(f"  Server Cert: {'[green]exists[/]' if server_cert.exists() else '[dim]not generated[/]'}")
+
+        # Connection logs location
+        console.print(f"\n  [cyan]Logs:[/] {config.log_dir}")
+        console.print()
+        prompt_input("Press Enter to continue", "")
+        return True
+
+    elif action == "blocked":
+        config = ServerConfig.load()
+        from darkcode_server.security import PersistentRateLimiter
+
+        fancy_progress("Loading blocked IPs...", 5)
+
+        db_path = config.config_dir / "security.db"
+        if not db_path.exists():
+            console.print("\n  [dim]No security database yet.[/]\n")
+        else:
+            rate_limiter = PersistentRateLimiter(db_path)
+            blocked = rate_limiter.get_blocked()
+
+            console.print()
+            if not blocked:
+                console.print("  [green]No blocked IPs or devices[/]")
+            else:
+                console.print("  [red]Blocked:[/]")
+                for b in blocked:
+                    console.print(f"    {b['identifier'][:20]} ({b['identifier_type']})")
+
+        console.print()
+        prompt_input("Press Enter to continue", "")
         return True
 
     elif action == "guest_list":
@@ -282,161 +572,28 @@ def execute_action(action: str) -> bool:
         codes = guest_mgr.list_codes()
 
         console.print()
-        console.print("[bold green]Guest Codes[/]")
-        console.print()
-
         if not codes:
-            console.print("[dim]No guest codes found.[/]")
+            console.print("  [dim]No guest codes found.[/]")
         else:
+            console.print("  [cyan]Guest Codes:[/]")
             for code in codes:
                 status = "[green]active[/]"
                 if not code.get("is_active"):
                     status = "[red]revoked[/]"
                 elif code.get("expired"):
                     status = "[yellow]expired[/]"
-                console.print(f"  [bold cyan]{code['code']}[/] - {code['name']} ({status})")
+                console.print(f"    [bold]{code['code']}[/] - {code['name']} ({status})")
 
         console.print()
-        Prompt.ask("[dim]Press Enter to continue[/]")
-        return True
-
-    elif action == "guest_revoke":
-        code = Prompt.ask("[cyan]Code to revoke[/]")
-        if not code:
-            return True
-
-        config = ServerConfig.load()
-        from darkcode_server.security import GuestAccessManager
-
-        fancy_progress("Revoking code...", 5)
-
-        guest_mgr = GuestAccessManager(config.config_dir / "guests.db")
-        if guest_mgr.revoke_code(code):
-            console.print(f"\n[green]Revoked:[/] {code.upper()}")
-        else:
-            console.print(f"\n[red]Not found:[/] {code}")
-
-        Prompt.ask("[dim]Press Enter to continue[/]")
-        return True
-
-    elif action == "guest_qr":
-        code = Prompt.ask("[cyan]Code for QR[/]")
-        if not code:
-            return True
-
-        fancy_progress("Generating QR code...", 8)
-
-        from darkcode_server.cli import guest_qr as show_guest_qr
-        from click.testing import CliRunner
-
-        runner = CliRunner()
-        result = runner.invoke(show_guest_qr, [code], standalone_mode=False)
-        if result.output:
-            console.print(result.output)
-
-        Prompt.ask("[dim]Press Enter to continue[/]")
-        return True
-
-    elif action == "security_tls":
-        config = ServerConfig.load()
-        config.tls_enabled = not config.tls_enabled
-        config.save()
-
-        fancy_progress("Updating TLS setting...", 5)
-
-        if config.tls_enabled:
-            console.print("\n[green]TLS enabled - Server will use wss://[/]")
-        else:
-            console.print("\n[yellow]TLS disabled - Server will use ws://[/]")
-
-        Prompt.ask("[dim]Press Enter to continue[/]")
-        return True
-
-    elif action == "security_mtls":
-        config = ServerConfig.load()
-        config.mtls_enabled = not config.mtls_enabled
-        if config.mtls_enabled:
-            config.tls_enabled = True
-        config.save()
-
-        fancy_progress("Updating mTLS setting...", 5)
-
-        if config.mtls_enabled:
-            console.print("\n[green]mTLS enabled - Clients must present certificates[/]")
-        else:
-            console.print("\n[dim]mTLS disabled[/]")
-
-        Prompt.ask("[dim]Press Enter to continue[/]")
-        return True
-
-    elif action == "security_device_lock":
-        config = ServerConfig.load()
-        config.device_lock = not config.device_lock
-        config.save()
-
-        fancy_progress("Updating device lock...", 5)
-
-        if config.device_lock:
-            console.print("\n[green]Device lock enabled[/]")
-        else:
-            console.print("\n[yellow]Device lock disabled[/]")
-
-        Prompt.ask("[dim]Press Enter to continue[/]")
-        return True
-
-    elif action == "security_reset_token":
-        if Confirm.ask("Generate new auth token? Current connections will be invalidated.", default=False):
-            import secrets
-            config = ServerConfig.load()
-            config.token = secrets.token_urlsafe(24)
-            config.save()
-
-            fancy_progress("Generating new token...", 8)
-            console.print(f"\n[green]New token:[/] {config.token}")
-
-        Prompt.ask("[dim]Press Enter to continue[/]")
-        return True
-
-    elif action == "security_blocked":
-        config = ServerConfig.load()
-        from darkcode_server.security import PersistentRateLimiter
-
-        fancy_progress("Loading blocked IPs...", 5)
-
-        db_path = config.config_dir / "security.db"
-        if not db_path.exists():
-            console.print("\n[dim]No security database yet.[/]")
-        else:
-            rate_limiter = PersistentRateLimiter(db_path)
-            blocked = rate_limiter.get_blocked()
-
-            console.print()
-            if not blocked:
-                console.print("[green]No blocked IPs or devices[/]")
-            else:
-                console.print("[bold red]Blocked[/]")
-                for b in blocked:
-                    console.print(f"  {b['identifier'][:20]} ({b['identifier_type']})")
-
-        Prompt.ask("[dim]Press Enter to continue[/]")
-        return True
-
-    elif action == "security_unbind":
-        config = ServerConfig.load()
-
-        if not config.bound_device_id:
-            console.print("\n[yellow]No device is currently bound.[/]")
-        elif Confirm.ask("Unbind current device?", default=False):
-            config.bound_device_id = None
-            config.save()
-            fancy_progress("Unbinding device...", 5)
-            console.print("[green]Device unbound.[/]")
-
-        Prompt.ask("[dim]Press Enter to continue[/]")
+        prompt_input("Press Enter to continue", "")
         return True
 
     return True
 
+
+# ============================================================================
+# MAIN MENU LOOP
+# ============================================================================
 
 def run_interactive_menu() -> Optional[Tuple[str, Optional[str]]]:
     """Run the interactive menu loop.
@@ -445,6 +602,8 @@ def run_interactive_menu() -> Optional[Tuple[str, Optional[str]]]:
         Tuple of (action, mode) for actions that need to exit the menu,
         or None if user quit.
     """
+    from darkcode_server.config import ServerConfig
+
     while True:
         clear_screen()
         show_header()
@@ -454,14 +613,29 @@ def run_interactive_menu() -> Optional[Tuple[str, Optional[str]]]:
         if action is None:
             return None
 
+        # Start Server
         if action == "start":
             clear_screen()
             show_header()
-            mode = show_connection_menu()
-            if mode:
-                return ("start", mode)
+            start_config = show_start_menu()
+            if start_config:
+                return ("start", start_config)
             continue
 
+        # Daemon
+        if action == "daemon":
+            clear_screen()
+            show_header()
+            daemon_action = show_daemon_menu()
+            if daemon_action == "foreground":
+                return ("daemon_foreground", None)
+            elif daemon_action == "background":
+                return ("daemon_background", None)
+            elif daemon_action == "stop":
+                return ("daemon_stop", None)
+            continue
+
+        # Guest Codes
         if action == "guest":
             while True:
                 clear_screen()
@@ -469,9 +643,52 @@ def run_interactive_menu() -> Optional[Tuple[str, Optional[str]]]:
                 guest_action = show_guest_menu()
                 if guest_action is None:
                     break
-                execute_action(guest_action)
+
+                if guest_action == "create":
+                    clear_screen()
+                    show_header()
+                    guest_data = show_guest_create_form()
+                    if guest_data:
+                        config = ServerConfig.load()
+                        from darkcode_server.security import GuestAccessManager
+                        guest_mgr = GuestAccessManager(config.config_dir / "guests.db")
+                        fancy_progress("Creating guest code...", 8)
+                        result = guest_mgr.create_guest_code(**guest_data)
+                        console.print(f"\n  [green]Created![/] Code: [bold]{result['code']}[/]\n")
+                        prompt_input("Press Enter to continue", "")
+
+                elif guest_action == "list":
+                    execute_action("guest_list")
+
+                elif guest_action == "revoke":
+                    console.print()
+                    code = prompt_input("Code to revoke")
+                    if code:
+                        config = ServerConfig.load()
+                        from darkcode_server.security import GuestAccessManager
+                        guest_mgr = GuestAccessManager(config.config_dir / "guests.db")
+                        fancy_progress("Revoking code...", 5)
+                        if guest_mgr.revoke_code(code):
+                            console.print(f"\n  [green]Revoked:[/] {code.upper()}\n")
+                        else:
+                            console.print(f"\n  [red]Not found:[/] {code}\n")
+                        prompt_input("Press Enter to continue", "")
+
+                elif guest_action == "qr":
+                    console.print()
+                    code = prompt_input("Code for QR")
+                    if code:
+                        fancy_progress("Generating QR...", 8)
+                        from click.testing import CliRunner
+                        from darkcode_server.cli import guest_qr
+                        runner = CliRunner()
+                        result = runner.invoke(guest_qr, [code], standalone_mode=False)
+                        if result.output:
+                            console.print(result.output)
+                        prompt_input("Press Enter to continue", "")
             continue
 
+        # Security
         if action == "security":
             while True:
                 clear_screen()
@@ -479,11 +696,128 @@ def run_interactive_menu() -> Optional[Tuple[str, Optional[str]]]:
                 sec_action = show_security_menu()
                 if sec_action is None:
                     break
-                execute_action(sec_action)
+
+                config = ServerConfig.load()
+
+                if sec_action == "status":
+                    execute_action("security_status")
+
+                elif sec_action == "tls":
+                    config.tls_enabled = not config.tls_enabled
+                    config.save()
+                    fancy_progress("Updating TLS...", 5)
+                    status = "[green]enabled[/]" if config.tls_enabled else "[yellow]disabled[/]"
+                    console.print(f"\n  TLS {status}\n")
+                    prompt_input("Press Enter to continue", "")
+
+                elif sec_action == "mtls":
+                    config.mtls_enabled = not config.mtls_enabled
+                    if config.mtls_enabled:
+                        config.tls_enabled = True
+                    config.save()
+                    fancy_progress("Updating mTLS...", 5)
+                    status = "[green]enabled[/]" if config.mtls_enabled else "[dim]disabled[/]"
+                    console.print(f"\n  mTLS {status}\n")
+                    prompt_input("Press Enter to continue", "")
+
+                elif sec_action == "device_lock":
+                    config.device_lock = not config.device_lock
+                    config.save()
+                    fancy_progress("Updating device lock...", 5)
+                    status = "[green]enabled[/]" if config.device_lock else "[yellow]disabled[/]"
+                    console.print(f"\n  Device Lock {status}\n")
+                    prompt_input("Press Enter to continue", "")
+
+                elif sec_action == "unbind":
+                    if not config.bound_device_id:
+                        console.print("\n  [yellow]No device is currently bound.[/]\n")
+                    elif prompt_confirm("Unbind current device?"):
+                        config.bound_device_id = None
+                        config.save()
+                        fancy_progress("Unbinding device...", 5)
+                        console.print("\n  [green]Device unbound.[/]\n")
+                    prompt_input("Press Enter to continue", "")
+
+                elif sec_action == "reset_token":
+                    if prompt_confirm("Generate new auth token? Current connections will be invalidated."):
+                        import secrets
+                        config.token = secrets.token_urlsafe(24)
+                        config.save()
+                        fancy_progress("Generating new token...", 8)
+                        console.print(f"\n  [green]New token:[/] {config.token}\n")
+                    prompt_input("Press Enter to continue", "")
+
+                elif sec_action == "rotate_token":
+                    return ("rotate_token", None)
+
+                elif sec_action == "blocked":
+                    execute_action("blocked")
+
+                elif sec_action == "client_cert":
+                    console.print()
+                    device_id = prompt_input("Device ID for certificate")
+                    if device_id:
+                        return ("client_cert", device_id)
             continue
 
-        if action == "setup":
-            return ("setup", None)
+        # Configuration
+        if action == "config":
+            while True:
+                clear_screen()
+                show_header()
+                cfg_action = show_config_menu()
+                if cfg_action is None:
+                    break
 
-        # Execute other actions inline
-        execute_action(action)
+                if cfg_action == "view":
+                    execute_action("view_config")
+
+                elif cfg_action == "edit":
+                    clear_screen()
+                    show_header()
+                    edit_data = show_config_edit_form()
+                    if edit_data:
+                        config = ServerConfig.load()
+                        config.port = edit_data["port"]
+                        config.working_dir = Path(edit_data["working_dir"])
+                        config.server_name = edit_data["server_name"]
+                        config.max_sessions_per_ip = edit_data["max_sessions_per_ip"]
+                        config.save()
+                        fancy_progress("Saving configuration...", 5)
+                        console.print("\n  [green]Configuration saved![/]\n")
+                    prompt_input("Press Enter to continue", "")
+
+                elif cfg_action == "token":
+                    execute_action("token")
+
+                elif cfg_action == "init":
+                    return ("setup", None)
+            continue
+
+        # Logs
+        if action == "logs":
+            execute_action("logs")
+            continue
+
+        # Service
+        if action == "service":
+            clear_screen()
+            show_header()
+            svc_action = show_service_menu()
+            if svc_action == "install":
+                return ("install", None)
+            elif svc_action == "uninstall":
+                return ("uninstall", None)
+            elif svc_action == "setup":
+                return ("setup", None)
+            continue
+
+        # Status (quick)
+        if action == "status":
+            execute_action("status")
+            continue
+
+        # QR code
+        if action == "qr":
+            execute_action("qr")
+            continue

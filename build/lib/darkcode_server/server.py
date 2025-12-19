@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import ssl
 import subprocess
 import time
@@ -12,12 +13,18 @@ from enum import Enum
 from typing import Optional, Tuple
 from pathlib import Path
 
+# Logger for this module
+logger = logging.getLogger(__name__)
+
 import websockets
 from websockets.server import WebSocketServerProtocol
+from websockets.http import Headers
+from websockets.http11 import Response
 
-# Suppress noisy websockets handshake errors (TLS mismatch, etc.)
-logging.getLogger("websockets.server").setLevel(logging.ERROR)
-logging.getLogger("websockets.protocol").setLevel(logging.ERROR)
+# Suppress noisy websockets handshake errors (TLS mismatch, InvalidUpgrade, etc.)
+logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
+logging.getLogger("websockets.protocol").setLevel(logging.CRITICAL)
+logging.getLogger("websockets").setLevel(logging.CRITICAL)
 
 from darkcode_server.config import ServerConfig
 from darkcode_server.security import (
@@ -131,9 +138,78 @@ class Session:
     permission_level: str = "full"  # "full" or "read_only"
     # Chat history
     chat_session_id: str = ""  # Persistent chat session ID for resuming
+    # Claude session ID for --resume functionality
+    claude_session_id: str = ""  # Claude Code session to resume
 
     def __post_init__(self):
         self.working_dir = Path(self.working_dir)
+
+
+def list_claude_sessions(working_dir: Path) -> list[dict]:
+    """List available Claude Code sessions for a working directory.
+
+    Scans ~/.claude/projects/ for session files matching the working directory.
+    Returns sessions sorted by last modified time (most recent first).
+    """
+    claude_dir = Path.home() / ".claude" / "projects"
+    if not claude_dir.exists():
+        return []
+
+    # Convert working dir to Claude's naming convention (path with dashes)
+    # e.g., /Users/foo/bar -> -Users-foo-bar
+    safe_name = str(working_dir.resolve()).replace("/", "-")
+    project_dir = claude_dir / safe_name
+
+    if not project_dir.exists():
+        return []
+
+    sessions = []
+    for session_file in project_dir.glob("*.jsonl"):
+        # Skip agent sessions (subagent files)
+        if session_file.stem.startswith("agent-"):
+            continue
+
+        try:
+            stat = session_file.stat()
+            # Try to read first and last line for metadata
+            preview = ""
+            session_id = session_file.stem
+
+            # Check if there's a subdirectory with same name (active session)
+            has_subdir = (project_dir / session_id).is_dir()
+
+            with open(session_file, "r") as f:
+                first_line = f.readline()
+                if first_line:
+                    try:
+                        data = json.loads(first_line)
+                        if data.get("type") == "user":
+                            msg = data.get("message", {})
+                            content = msg.get("content", [])
+                            if isinstance(content, list) and content:
+                                for block in content:
+                                    if isinstance(block, dict) and block.get("type") == "text":
+                                        text = block.get("text", "")
+                                        # Skip system messages
+                                        if not text.startswith("<"):
+                                            preview = text[:100]
+                                            break
+                    except json.JSONDecodeError:
+                        pass
+
+            sessions.append({
+                "sessionId": session_id,
+                "lastModified": int(stat.st_mtime * 1000),
+                "size": stat.st_size,
+                "preview": preview,
+                "isActive": has_subdir,
+            })
+        except (IOError, OSError):
+            continue
+
+    # Sort by last modified (most recent first)
+    sessions.sort(key=lambda x: x["lastModified"], reverse=True)
+    return sessions[:20]  # Limit to 20 most recent
 
 
 class DarkCodeServer:
@@ -190,6 +266,9 @@ class DarkCodeServer:
         if self.config.device_lock and self.config.bound_device_id:
             self._bound_device_id = self.config.bound_device_id
             self._state = ServerState.LOCKED
+
+        # Web admin handler (lazy loaded)
+        self._web_admin = None
 
     def _generate_device_id(self, client_ip: str, user_agent: str = "", device_info: dict = None) -> str:
         """Generate a unique device fingerprint.
@@ -273,6 +352,104 @@ class DarkCodeServer:
                 self.config.save()
                 # Note: Old tokens valid for grace_hours
 
+    async def _process_request(self, connection, request):
+        """Process HTTP requests before WebSocket upgrade.
+
+        This allows serving the web admin dashboard on /admin while
+        still handling WebSocket connections on the same port.
+
+        Note: websockets 13+ passes (connection, request) instead of (path, headers)
+        and expects a Response object, not a tuple.
+        """
+        # Extract path and headers from the request object
+        # Handle both old and new websockets API
+        if hasattr(request, 'path'):
+            path = request.path
+            request_headers = request.headers
+        else:
+            # Old API - request is actually path string
+            path = str(connection) if isinstance(connection, str) else getattr(connection, 'path', '/')
+            request_headers = request if hasattr(request, 'get') else {}
+
+        # Serve favicon.ico
+        if isinstance(path, str) and path == '/favicon.ico':
+            try:
+                from darkcode_server.web_admin import serve_favicon
+                status, resp_headers, resp_body = serve_favicon()
+                header_list = [(k, v) for k, v in resp_headers.items()]
+                return Response(status, "OK", Headers(header_list), resp_body)
+            except ImportError:
+                return Response(404, "Not Found", Headers([]), b"")
+
+        # Check if web admin is disabled
+        if getattr(self.config, 'web_admin_disabled', False):
+            # Return None to let websockets handle it normally
+            # This may result in 426 for non-WS requests, which is fine
+            return None
+
+        # Handle admin dashboard requests (non-WebSocket HTTP)
+        if isinstance(path, str) and path.startswith('/admin'):
+            # Initialize web admin handler if needed
+            if self._web_admin is None:
+                try:
+                    from darkcode_server.web_admin import WebAdminHandler
+                    self._web_admin = WebAdminHandler(self.config, self)
+                except ImportError:
+                    return Response(404, "Not Found", Headers([]), b"Web admin not available")
+
+            # Determine HTTP method
+            method = 'GET'
+            content_length = request_headers.get('Content-Length', '0')
+            if int(content_length) > 0:
+                method = 'POST'
+
+            # Build headers dict
+            headers = {str(k): str(v) for k, v in request_headers.items()}
+
+            # Handle the request
+            status, resp_headers, resp_body = self._web_admin.handle_request(
+                path, method, headers, b''
+            )
+
+            # Build Response object for websockets 13+
+            from http import HTTPStatus
+            try:
+                reason = HTTPStatus(status).phrase
+            except ValueError:
+                reason = "Unknown"
+
+            header_list = [(k, v) for k, v in resp_headers.items()]
+            return Response(status, reason, Headers(header_list), resp_body)
+
+        # Check if this is a WebSocket upgrade request
+        # If not, return a friendly HTTP response instead of letting websockets raise InvalidUpgrade
+        connection_header = request_headers.get('Connection', '').lower() if hasattr(request_headers, 'get') else ''
+        upgrade_header = request_headers.get('Upgrade', '').lower() if hasattr(request_headers, 'get') else ''
+
+        if 'upgrade' not in connection_header or upgrade_header != 'websocket':
+            # Non-WebSocket HTTP request - return a simple response
+            # This prevents InvalidUpgrade errors from browser auto-refresh, health checks, etc.
+            html = b"""<!DOCTYPE html>
+<html><head><title>DarkCode Server</title></head>
+<body style="font-family: system-ui; background: #1a1a2e; color: #eee; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;">
+<div style="text-align: center;">
+<h1 style="color: #00d4ff;">DarkCode Server</h1>
+<p>WebSocket server running. Use the DarkCode app to connect.</p>
+<p><a href="/admin" style="color: #00d4ff;">Web Admin Dashboard</a></p>
+</div></body></html>"""
+            return Response(
+                200, "OK",
+                Headers([
+                    ("Content-Type", "text/html; charset=utf-8"),
+                    ("Content-Length", str(len(html))),
+                    ("Cache-Control", "no-cache"),
+                ]),
+                html
+            )
+
+        # For WebSocket paths, return None to continue with upgrade
+        return None
+
     async def start(self):
         """Start the WebSocket server."""
         self._running = True
@@ -309,6 +486,7 @@ class DarkCodeServer:
             ssl=ssl_context,
             ping_interval=self.config.ping_interval,
             ping_timeout=self.config.ping_timeout,
+            process_request=self._process_request,  # Handle HTTP admin requests
         )
 
         # Start idle monitor if timeout is configured
@@ -535,6 +713,7 @@ class DarkCodeServer:
                             "success": True,
                             "sessionId": session_id,
                             "workingDir": str(self.config.working_dir),
+                            "browseDir": str(self.config.effective_browse_dir),
                             "deviceBound": self.config.device_lock,
                             "state": self._state.value,
                             "isGuest": is_guest,
@@ -571,11 +750,15 @@ class DarkCodeServer:
                 else:
                     self.ip_session_count[client_ip] = count
 
-    async def _start_claude_process(self, session: Session):
+    async def _start_claude_process(self, session: Session, resume_session_id: str = None):
         """Start the Claude Code CLI process.
 
         SECURITY: Uses validated working directory from config.
         Uses -p (print mode) with stream-json for bidirectional streaming.
+
+        Args:
+            session: The session to start Claude for
+            resume_session_id: Optional Claude session ID to resume (for handoffs)
         """
         try:
             # Use validated working directory
@@ -591,6 +774,10 @@ class DarkCodeServer:
                 "--include-partial-messages",  # Enable streaming deltas
                 "--permission-mode", self.config.permission_mode,
             ]
+
+            # Add resume flag if resuming a session (session handoff)
+            if resume_session_id:
+                cmd.extend(["--resume", resume_session_id])
 
             session.process = subprocess.Popen(
                 cmd,
@@ -1094,6 +1281,45 @@ class DarkCodeServer:
                     "chatSessionId": chat_session_id,
                 }))
 
+        # === Claude Session Handoffs ===
+        elif msg_type == "list_claude_sessions":
+            # List available Claude Code sessions for handoff
+            sessions_list = list_claude_sessions(session.working_dir)
+            await session.websocket.send(json.dumps({
+                "type": "claude_sessions_list",
+                "sessions": sessions_list,
+                "workingDir": str(session.working_dir),
+            }))
+
+        elif msg_type == "resume_claude_session":
+            # Resume a specific Claude Code session
+            claude_session_id = msg.get("sessionId", "")
+            if not claude_session_id:
+                await session.websocket.send(json.dumps({
+                    "type": "error",
+                    "message": "sessionId is required to resume a session",
+                }))
+                return
+
+            # Kill existing Claude process if running
+            if session.process and self._is_process_alive(session):
+                try:
+                    session.process.terminate()
+                    session.process.wait(timeout=3)
+                except Exception:
+                    session.process.kill()
+
+            # Store the Claude session ID for resume
+            session.claude_session_id = claude_session_id
+
+            # Start Claude with the resume flag
+            await self._start_claude_process(session, resume_session_id=claude_session_id)
+
+            await session.websocket.send(json.dumps({
+                "type": "claude_session_resumed",
+                "sessionId": claude_session_id,
+            }))
+
         # === File Operations ===
         elif msg_type == "list_files":
             # List files in a directory
@@ -1114,6 +1340,106 @@ class DarkCodeServer:
             # Delete a file or directory
             path = msg.get("path", "")
             await self._handle_delete_file(session, path)
+
+        # === Terminal/Bash Execution ===
+        elif msg_type == "execute_bash":
+            command = msg.get("command", "")
+            timeout = msg.get("timeout", 30000)  # Default 30s
+            logger.info(f"[BASH] Received execute_bash: {command[:100]}")
+            await self._handle_execute_bash(session, command, timeout)
+
+    async def _handle_execute_bash(self, session: Session, command: str, timeout_ms: int):
+        """Execute a bash command directly and return the output.
+
+        SECURITY: Commands are executed in the session's working directory.
+        This is for terminal mode - direct shell access for the user.
+        """
+        if not command or not command.strip():
+            await session.websocket.send(json.dumps({
+                "type": "bash_output",
+                "command": command,
+                "output": "Error: Empty command",
+                "exitCode": 1,
+                "isError": True,
+            }))
+            return
+
+        # Sanitize command - basic safety checks
+        command = command.strip()
+
+        # Max command length
+        if len(command) > 10000:
+            await session.websocket.send(json.dumps({
+                "type": "bash_output",
+                "command": command[:100] + "...",
+                "output": "Error: Command too long",
+                "exitCode": 1,
+                "isError": True,
+            }))
+            return
+
+        timeout_sec = min(timeout_ms / 1000, 300)  # Max 5 minutes
+
+        try:
+            import asyncio
+
+            # Run command in working directory
+            process = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(session.working_dir),
+                env={**os.environ, "TERM": "xterm-256color"},
+            )
+
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=timeout_sec
+                )
+                exit_code = process.returncode or 0
+
+                # Combine stdout and stderr
+                output = ""
+                if stdout:
+                    output += stdout.decode("utf-8", errors="replace")
+                if stderr:
+                    if output:
+                        output += "\n"
+                    output += stderr.decode("utf-8", errors="replace")
+
+                response = {
+                    "type": "bash_output",
+                    "command": command,
+                    "output": output.strip() or "(no output)",
+                    "exitCode": exit_code,
+                    "isError": exit_code != 0,
+                    "timestamp": int(time.time() * 1000),
+                }
+                logger.info(f"[BASH] Sending response: exit={exit_code}, output_len={len(output)}")
+                await session.websocket.send(json.dumps(response))
+
+            except asyncio.TimeoutError:
+                process.kill()
+                await session.websocket.send(json.dumps({
+                    "type": "bash_output",
+                    "command": command,
+                    "output": f"Error: Command timed out after {timeout_sec}s",
+                    "exitCode": 124,  # Standard timeout exit code
+                    "isError": True,
+                    "timestamp": int(time.time() * 1000),
+                }))
+
+        except Exception as e:
+            logger.error(f"Bash execution error: {e}")
+            await session.websocket.send(json.dumps({
+                "type": "bash_output",
+                "command": command,
+                "output": f"Error: {str(e)}",
+                "exitCode": 1,
+                "isError": True,
+                "timestamp": int(time.time() * 1000),
+            }))
 
     def _resolve_safe_path(self, session: Session, path: str) -> Optional[Path]:
         """Resolve a path safely within the working directory.

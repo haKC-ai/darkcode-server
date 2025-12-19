@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: darkcode-server
-Version: 0.1.28
+Version: 0.1.41
 Summary: Server for DarkCode Agent - Remote Claude Code from your phone
 Author: 0xdeadbeef
 License: MIT
@@ -64,6 +64,23 @@ Dynamic: license-file
 <p align="center">
   <strong>[ Control Claude Code from your phone ]</strong>
 </p>
+
+---
+
+## TL;DR - Fastest Way to Test
+
+```bash
+# 1. Install the server
+pip install darkcode-server
+
+# 2. Run setup and start
+darkcode setup    # Follow prompts, generates QR code
+darkcode start    # Starts server, shows QR code
+
+# 3. On your phone: Install DarkCode app from Google Play, scan QR
+```
+
+That's it! The QR code connects everything automatically.
 
 ---
 

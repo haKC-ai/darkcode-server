@@ -149,7 +149,14 @@ class ServerConfig(BaseSettings):
             f"DARKCODE_MTLS_ENABLED={str(self.mtls_enabled).lower()}",
             f"DARKCODE_TOKEN_ROTATION_DAYS={self.token_rotation_days}",
             f"DARKCODE_TOKEN_GRACE_HOURS={self.token_grace_hours}",
+            f"DARKCODE_PERMISSION_MODE={self.permission_mode}",
+            f"DARKCODE_RATE_LIMIT_ATTEMPTS={self.rate_limit_attempts}",
+            f"DARKCODE_RATE_LIMIT_WINDOW={self.rate_limit_window}",
         ]
+
+        # Save browse_dir if set
+        if self.browse_dir:
+            lines.append(f"DARKCODE_BROWSE_DIR={self.browse_dir}")
 
         # Save bound device if set
         if self.bound_device_id:
