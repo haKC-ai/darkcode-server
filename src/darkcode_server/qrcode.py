@@ -2,16 +2,27 @@
 
 import base64
 import json
+from pathlib import Path
 from typing import Optional
 
 import qrcode
 from rich.console import Console
 
 from darkcode_server.config import ServerConfig
+from darkcode_server.security import CertificateManager
 
 
-def generate_deep_link(config: ServerConfig, mode: str = "direct") -> str:
-    """Generate a deep link URL for the mobile app."""
+def generate_deep_link(config: ServerConfig, mode: str = "direct", cert_fingerprint: Optional[str] = None) -> str:
+    """Generate a deep link URL for the mobile app.
+
+    Args:
+        config: Server configuration
+        mode: Connection mode (direct, tailscale, ssh)
+        cert_fingerprint: TLS certificate SHA256 fingerprint for pinning
+
+    Returns:
+        Deep link URL for the mobile app
+    """
     ips = config.get_local_ips()
     tailscale_ip = config.get_tailscale_ip()
 
@@ -34,7 +45,12 @@ def generate_deep_link(config: ServerConfig, mode: str = "direct") -> str:
         "p": config.port,               # port
         "t": config.token,              # token
         "m": mode[0],                   # mode (d=direct, t=tailscale, s=ssh)
+        "s": 1,                         # secure (TLS required)
     }
+
+    # Add certificate fingerprint for TLS pinning (first 32 chars of SHA256)
+    if cert_fingerprint:
+        payload["f"] = cert_fingerprint[:32]  # fingerprint (truncated for QR size)
 
     # Use compact JSON (no spaces)
     b64 = base64.urlsafe_b64encode(
@@ -43,9 +59,23 @@ def generate_deep_link(config: ServerConfig, mode: str = "direct") -> str:
     return f"darkcode://s?c={b64}"
 
 
-def print_qr_code(config: ServerConfig, console: Console, mode: str = "direct"):
+def get_cert_fingerprint(config: ServerConfig) -> Optional[str]:
+    """Get or generate the server's TLS certificate fingerprint."""
+    cert_dir = Path.home() / ".darkcode" / "certs"
+    cert_manager = CertificateManager(cert_dir)
+
+    # Get local IPs for SAN
+    local_ips = [ip["address"] for ip in config.get_local_ips()]
+    tailscale_ip = config.get_tailscale_ip()
+    if tailscale_ip:
+        local_ips.append(tailscale_ip)
+
+    return cert_manager.ensure_server_cert(san_ips=local_ips)
+
+
+def print_qr_code(config: ServerConfig, console: Console, mode: str = "direct", cert_fingerprint: Optional[str] = None):
     """Print a QR code to the terminal."""
-    deep_link = generate_deep_link(config, mode)
+    deep_link = generate_deep_link(config, mode, cert_fingerprint)
 
     qr = qrcode.QRCode(
         version=None,  # Auto-size
@@ -96,6 +126,10 @@ def print_server_info(config: ServerConfig, console: Console):
     from rich.table import Table
     from rich.text import Text
 
+    # Get TLS cert fingerprint (generates cert if needed)
+    cert_fingerprint = get_cert_fingerprint(config) if config.tls_enabled else None
+    protocol = "wss" if config.tls_enabled else "ws"
+
     # Server info table
     table = Table(show_header=False, box=None, padding=(0, 2))
     table.add_column("Key", style="cyan")
@@ -104,6 +138,14 @@ def print_server_info(config: ServerConfig, console: Console):
     # Show bind address
     table.add_row("bind", f"{config.bind_host}:{config.port}")
 
+    # Show TLS status
+    if config.tls_enabled:
+        table.add_row("security", "[green]TLS enabled (wss://)[/]")
+        if cert_fingerprint:
+            table.add_row("cert", f"[dim]{cert_fingerprint[:16]}...[/]")
+    else:
+        table.add_row("security", "[red]INSECURE (ws://)[/]")
+
     if config.local_only:
         # Local-only mode - only localhost
         table.add_row("mode", "[cyan]SSH Tunnel (localhost only)[/]")
@@ -111,12 +153,12 @@ def print_server_info(config: ServerConfig, console: Console):
         # Show all available IPs
         ips = config.get_local_ips()
         for ip_info in ips:
-            table.add_row(ip_info["name"], f"ws://{ip_info['address']}:{config.port}")
+            table.add_row(ip_info["name"], f"{protocol}://{ip_info['address']}:{config.port}")
 
         tailscale_ip = config.get_tailscale_ip()
         tailscale_hostname = config.get_tailscale_hostname()
         if tailscale_ip:
-            table.add_row("tailscale", f"ws://{tailscale_ip}:{config.port}")
+            table.add_row("tailscale", f"{protocol}://{tailscale_ip}:{config.port}")
         if tailscale_hostname:
             table.add_row("hostname", tailscale_hostname)
 
@@ -139,11 +181,11 @@ def print_server_info(config: ServerConfig, console: Console):
     if tailscale_ip:
         console.print("\n[bold green]Scan to connect (Tailscale - Recommended):[/]")
         console.print("-" * 40)
-        ts_link = print_qr_code(config, console, "tailscale")
+        ts_link = print_qr_code(config, console, "tailscale", cert_fingerprint)
         console.print(f"\n[dim]Link:[/] {ts_link[:60]}...")
 
     # Then show direct mode
-    console.print("\n[bold cyan]Scan to connect (Direct LAN):[/]")
+    console.print("\n[bold cyan]Scan to connect (Direct LAN - Secure):[/]")
     console.print("-" * 40)
-    deep_link = print_qr_code(config, console, "direct")
+    deep_link = print_qr_code(config, console, "direct", cert_fingerprint)
     console.print(f"\n[dim]Link:[/] {deep_link[:60]}...")

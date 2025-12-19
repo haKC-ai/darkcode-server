@@ -50,8 +50,8 @@ class ServerConfig(BaseSettings):
     idle_timeout: int = Field(default=300, description="Seconds of idle before sleep mode (0=disabled)")
     bound_device_id: Optional[str] = Field(default=None, description="Bound device fingerprint")
 
-    # TLS settings
-    tls_enabled: bool = Field(default=False, description="Enable TLS (wss://)")
+    # TLS settings (TLS is mandatory for security)
+    tls_enabled: bool = Field(default=True, description="Enable TLS (wss://) - required for security")
     mtls_enabled: bool = Field(default=False, description="Require client certificates (mTLS)")
     tls_cert_path: Optional[Path] = Field(default=None, description="Custom TLS certificate path")
     tls_key_path: Optional[Path] = Field(default=None, description="Custom TLS key path")

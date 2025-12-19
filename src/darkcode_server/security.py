@@ -312,6 +312,33 @@ class CertificateManager:
 
         return context
 
+    def get_cert_fingerprint(self) -> Optional[str]:
+        """Get SHA256 fingerprint of the server certificate.
+
+        Returns:
+            SHA256 fingerprint as hex string, or None if cert doesn't exist
+        """
+        if not self.server_cert_path.exists():
+            return None
+
+        cert_pem = self.server_cert_path.read_bytes()
+        cert = x509.load_pem_x509_certificate(cert_pem, default_backend())
+        fingerprint = cert.fingerprint(hashes.SHA256())
+        return fingerprint.hex()
+
+    def ensure_server_cert(self, san_ips: list[str] = None) -> str:
+        """Ensure server certificate exists and return its fingerprint.
+
+        Args:
+            san_ips: Additional IP addresses for SAN
+
+        Returns:
+            SHA256 fingerprint of the certificate
+        """
+        if not self.server_cert_path.exists():
+            self.generate_server_cert(san_ips=san_ips)
+        return self.get_cert_fingerprint()
+
     def verify_client_cert(self, cert_pem: bytes) -> Optional[str]:
         """Verify a client certificate and extract device ID.
 
