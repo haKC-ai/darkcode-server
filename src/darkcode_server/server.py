@@ -157,7 +157,8 @@ def list_claude_sessions(working_dir: Path) -> list[dict]:
 
     # Convert working dir to Claude's naming convention (path with dashes)
     # e.g., /Users/foo/bar -> -Users-foo-bar
-    safe_name = str(working_dir.resolve()).replace("/", "-")
+    # Also replace dots with dashes (e.g., hakc.dev -> hakc-dev)
+    safe_name = str(working_dir.resolve()).replace("/", "-").replace(".", "-")
     project_dir = claude_dir / safe_name
 
     if not project_dir.exists():
