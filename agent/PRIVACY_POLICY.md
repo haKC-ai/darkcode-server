@@ -53,10 +53,10 @@ We may update this privacy policy. Changes will be posted in the app repository.
 ## Contact
 
 For questions about this privacy policy:
-- GitHub: https://github.com/haKC-ai/DarkCodeAgent
-- Email: privacy@hakc.ai
+- GitHub: https://github.com/haKC-ai/darkcode-server
+- Email: cory@darkcode.ai
 
 ## Open Source
 
 DarkCode Agent is open source. You can review the code at:
-https://github.com/haKC-ai/DarkCodeAgent
+https://github.com/haKC-ai/darkcode-server
