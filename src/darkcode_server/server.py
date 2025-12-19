@@ -244,31 +244,39 @@ def list_claude_sessions(working_dir: Path) -> list[dict]:
                 continue
 
             try:
-                # Try to read first line for preview
+                # Try to find actual user text for preview
                 preview = ""
                 session_id = session_file.stem
 
                 # Check if there's a subdirectory with same name (active session)
                 has_subdir = (project_dir / session_id).is_dir()
 
+                # Scan through lines to find real user messages (not IDE context)
                 with open(session_file, "r") as f:
-                    first_line = f.readline()
-                    if first_line:
+                    lines_checked = 0
+                    for line in f:
+                        lines_checked += 1
+                        if lines_checked > 100:  # Don't scan forever
+                            break
                         try:
-                            data = json.loads(first_line)
+                            data = json.loads(line)
                             if data.get("type") == "user":
                                 msg = data.get("message", {})
                                 content = msg.get("content", [])
                                 if isinstance(content, list) and content:
                                     for block in content:
                                         if isinstance(block, dict) and block.get("type") == "text":
-                                            text = block.get("text", "")
-                                            # Skip system messages
-                                            if not text.startswith("<"):
-                                                preview = text[:100]
+                                            text = block.get("text", "").strip()
+                                            # Skip IDE/system messages that start with <
+                                            if not text.startswith("<") and len(text) > 5:
+                                                # Clean up: take first line, truncate
+                                                first_line = text.split("\n")[0][:120]
+                                                preview = first_line
                                                 break
+                                if preview:
+                                    break
                         except json.JSONDecodeError:
-                            pass
+                            continue
 
                 sessions.append({
                     "sessionId": session_id,
@@ -281,8 +289,8 @@ def list_claude_sessions(working_dir: Path) -> list[dict]:
             except (IOError, OSError):
                 continue
 
-    # Sort by last modified (most recent first)
-    sessions.sort(key=lambda x: x["lastModified"], reverse=True)
+    # Sort: active sessions first, then by last modified (most recent first)
+    sessions.sort(key=lambda x: (not x["isActive"], -x["lastModified"]))
     return sessions[:30]  # Limit to 30 most recent
 
 
