@@ -35,7 +35,7 @@ class ServerConfig(BaseSettings):
     port: int = Field(default=3100, description="WebSocket server port")
     host: str = Field(default="0.0.0.0", description="Bind address (use 127.0.0.1 for local only)")
     token: str = Field(default_factory=get_default_token, description="Auth token")
-    working_dir: Path = Field(default_factory=Path.cwd, description="Working directory for Claude")
+    working_dir: Path = Field(default_factory=Path.home, description="Working directory for Claude")
     browse_dir: Optional[Path] = Field(default=None, description="Default directory for app file browser (defaults to working_dir)")
     server_name: str = Field(default_factory=get_hostname, description="Server display name")
 
