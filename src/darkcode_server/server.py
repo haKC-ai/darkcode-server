@@ -145,72 +145,145 @@ class Session:
         self.working_dir = Path(self.working_dir)
 
 
-def list_claude_sessions(working_dir: Path) -> list[dict]:
-    """List available Claude Code sessions for a working directory.
+def _decode_claude_project_path(encoded_name: str) -> str:
+    """Decode a Claude project directory name to the actual filesystem path.
 
-    Scans ~/.claude/projects/ for session files matching the working directory.
+    Claude Code encodes paths by replacing / and . with -
+    e.g., /Users/foo/hakc.dev -> -Users-foo-hakc-dev
+    But directory names with dashes stay as dashes:
+    e.g., /Users/foo/android-app -> -Users-foo-android-app
+
+    We need to find which actual path this corresponds to by trying all combinations.
+    """
+    # Start by trying simple / replacement
+    simple_decoded = encoded_name.replace("-", "/")
+    if simple_decoded.startswith("//"):
+        simple_decoded = simple_decoded[1:]
+
+    # If that path exists, we're done
+    if Path(simple_decoded).exists():
+        return simple_decoded
+
+    # Otherwise, we need to try variations
+    # Split into parts and try reconstructing with / or . or - at various positions
+    parts = encoded_name.split("-")
+    if parts and parts[0] == "":
+        parts = parts[1:]  # Remove leading empty string from "-Users-..."
+
+    # Try all combinations and collect valid paths
+    def try_combinations(idx: int, current_path: str, results: list):
+        if idx >= len(parts):
+            if current_path and Path(current_path).exists():
+                results.append(current_path)
+            return
+
+        part = parts[idx]
+
+        # Option 1: Add as new directory segment (/)
+        if current_path:
+            new_path = f"{current_path}/{part}"
+        else:
+            new_path = f"/{part}"
+        try_combinations(idx + 1, new_path, results)
+
+        # Option 2: Add as extension/continuation with dot (.)
+        if current_path:
+            dotted_path = f"{current_path}.{part}"
+            try_combinations(idx + 1, dotted_path, results)
+
+        # Option 3: Add as continuation with dash (-) - for directory names with dashes
+        if current_path:
+            dashed_path = f"{current_path}-{part}"
+            try_combinations(idx + 1, dashed_path, results)
+
+    results: list[str] = []
+    try_combinations(0, "", results)
+
+    if results:
+        # Return the longest valid path (most specific match)
+        return max(results, key=len)
+
+    # Fallback: return simple decoded even if it doesn't exist
+    return simple_decoded
+
+
+def list_claude_sessions(working_dir: Path) -> list[dict]:
+    """List all available Claude Code sessions across all projects.
+
+    Scans all project directories in ~/.claude/projects/ to find sessions.
     Returns sessions sorted by last modified time (most recent first).
     """
     claude_dir = Path.home() / ".claude" / "projects"
     if not claude_dir.exists():
         return []
 
-    # Convert working dir to Claude's naming convention (path with dashes)
-    # e.g., /Users/foo/bar -> -Users-foo-bar
-    # NOTE: Claude Code only replaces slashes, NOT dots (hakc.dev stays hakc.dev)
-    safe_name = str(working_dir.resolve()).replace("/", "-")
-    project_dir = claude_dir / safe_name
-
-    if not project_dir.exists():
-        return []
-
     sessions = []
-    for session_file in project_dir.glob("*.jsonl"):
-        # Skip agent sessions (subagent files)
-        if session_file.stem.startswith("agent-"):
+
+    # Scan ALL project directories, not just the working_dir one
+    for project_dir in claude_dir.iterdir():
+        if not project_dir.is_dir():
             continue
 
-        try:
-            stat = session_file.stat()
-            # Try to read first and last line for metadata
-            preview = ""
-            session_id = session_file.stem
+        # The directory name is the encoded path (e.g., -Users-0xdeadbeef-hakc-dev)
+        encoded_path = project_dir.name
 
-            # Check if there's a subdirectory with same name (active session)
-            has_subdir = (project_dir / session_id).is_dir()
+        # Decode to actual filesystem path for cd'ing into
+        actual_path = _decode_claude_project_path(encoded_path)
 
-            with open(session_file, "r") as f:
-                first_line = f.readline()
-                if first_line:
-                    try:
-                        data = json.loads(first_line)
-                        if data.get("type") == "user":
-                            msg = data.get("message", {})
-                            content = msg.get("content", [])
-                            if isinstance(content, list) and content:
-                                for block in content:
-                                    if isinstance(block, dict) and block.get("type") == "text":
-                                        text = block.get("text", "")
-                                        # Skip system messages
-                                        if not text.startswith("<"):
-                                            preview = text[:100]
-                                            break
-                    except json.JSONDecodeError:
-                        pass
+        for session_file in project_dir.glob("*.jsonl"):
+            # Skip agent sessions (subagent files)
+            if session_file.stem.startswith("agent-"):
+                continue
 
-            sessions.append({
-                "sessionId": session_id,
-                "lastModified": int(stat.st_mtime * 1000),
-                "size": stat.st_size,
-                "preview": preview,
-                "isActive": has_subdir,
-            })
-        except (IOError, OSError):
-            continue
+            # Skip empty files
+            try:
+                stat = session_file.stat()
+                if stat.st_size == 0:
+                    continue
+            except (IOError, OSError):
+                continue
+
+            try:
+                # Try to read first line for preview
+                preview = ""
+                session_id = session_file.stem
+
+                # Check if there's a subdirectory with same name (active session)
+                has_subdir = (project_dir / session_id).is_dir()
+
+                with open(session_file, "r") as f:
+                    first_line = f.readline()
+                    if first_line:
+                        try:
+                            data = json.loads(first_line)
+                            if data.get("type") == "user":
+                                msg = data.get("message", {})
+                                content = msg.get("content", [])
+                                if isinstance(content, list) and content:
+                                    for block in content:
+                                        if isinstance(block, dict) and block.get("type") == "text":
+                                            text = block.get("text", "")
+                                            # Skip system messages
+                                            if not text.startswith("<"):
+                                                preview = text[:100]
+                                                break
+                        except json.JSONDecodeError:
+                            pass
+
+                sessions.append({
+                    "sessionId": session_id,
+                    "lastModified": int(stat.st_mtime * 1000),
+                    "size": stat.st_size,
+                    "preview": preview,
+                    "isActive": has_subdir,
+                    "projectPath": actual_path,
+                })
+            except (IOError, OSError):
+                continue
 
     # Sort by last modified (most recent first)
     sessions.sort(key=lambda x: x["lastModified"], reverse=True)
-    return sessions[:20]  # Limit to 20 most recent
+    return sessions[:30]  # Limit to 30 most recent
 
 
 class DarkCodeServer:
@@ -1295,6 +1368,7 @@ class DarkCodeServer:
         elif msg_type == "resume_claude_session":
             # Resume a specific Claude Code session
             claude_session_id = msg.get("sessionId", "")
+            project_path = msg.get("projectPath", "")
             if not claude_session_id:
                 await session.websocket.send(json.dumps({
                     "type": "error",
@@ -1313,12 +1387,20 @@ class DarkCodeServer:
             # Store the Claude session ID for resume
             session.claude_session_id = claude_session_id
 
+            # Update working directory if project path provided
+            # Claude --resume requires being in the correct project directory
+            if project_path:
+                project_dir = Path(project_path)
+                if project_dir.exists() and project_dir.is_dir():
+                    session.working_dir = project_dir
+
             # Start Claude with the resume flag
             await self._start_claude_process(session, resume_session_id=claude_session_id)
 
             await session.websocket.send(json.dumps({
                 "type": "claude_session_resumed",
                 "sessionId": claude_session_id,
+                "workingDir": str(session.working_dir),
             }))
 
         # === File Operations ===
