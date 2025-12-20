@@ -72,7 +72,7 @@ class ServerConfig(BaseSettings):
 
     # Claude permission settings
     permission_mode: str = Field(
-        default="acceptEdits",
+        default="bypassPermissions",
         description="Claude permission mode: default, acceptEdits, or bypassPermissions"
     )
 
