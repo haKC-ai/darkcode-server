@@ -123,9 +123,9 @@ class ServerConfig(BaseSettings):
 
         return resolved
 
-    # Health check settings
-    ping_interval: int = Field(default=30, description="Ping interval in seconds")
-    ping_timeout: int = Field(default=10, description="Ping timeout in seconds")
+    # Health check settings - very lenient for mobile apps that may be backgrounded
+    ping_interval: int = Field(default=900, description="Ping interval in seconds (15 min)")
+    ping_timeout: int = Field(default=300, description="Ping timeout in seconds (5 min)")
 
     # Paths - all config stored in ~/darkcode/.darkcode
     config_dir: Path = Field(
